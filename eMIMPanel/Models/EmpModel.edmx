@@ -1,0 +1,142 @@
+﻿<?xml version="1.0" encoding="utf-8"?>
+<edmx:Edmx Version="3.0" xmlns:edmx="http://schemas.microsoft.com/ado/2009/11/edmx">
+  <!-- EF Runtime content -->
+  <edmx:Runtime>
+    <!-- SSDL content -->
+    <edmx:StorageModels>
+      <Schema Namespace="EMIMPANELModel.Store" Provider="System.Data.SqlClient" ProviderManifestToken="2012" Alias="Self" xmlns:store="http://schemas.microsoft.com/ado/2007/12/edm/EntityStoreSchemaGenerator" xmlns:customannotation="http://schemas.microsoft.com/ado/2013/11/edm/customannotation" xmlns="http://schemas.microsoft.com/ado/2009/11/edm/ssdl">
+        <EntityType Name="CUSTOMER">
+          <Key>
+            <PropertyRef Name="username" />
+          </Key>
+          <Property Name="SENDERID" Type="varchar" MaxLength="100" />
+          <Property Name="SMSTYPE" Type="varchar" MaxLength="10" />
+          <Property Name="FULLNAME" Type="varchar" MaxLength="100" />
+          <Property Name="ACCOUNTTYPE" Type="varchar" MaxLength="10" />
+          <Property Name="PERMISSION" Type="varchar" MaxLength="10" />
+          <Property Name="COMPNAME" Type="varchar" MaxLength="300" />
+          <Property Name="WEBSITE" Type="varchar" MaxLength="300" />
+          <Property Name="MOBILE1" Type="varchar" MaxLength="20" />
+          <Property Name="MOBILE2" Type="varchar" MaxLength="20" />
+          <Property Name="EMAIL" Type="varchar" MaxLength="100" />
+          <Property Name="COUNTRYCODE" Type="varchar" MaxLength="10" />
+          <Property Name="ACCOUNTCREATEDON" Type="datetime" />
+          <Property Name="EXPIRY" Type="datetime" />
+          <Property Name="ACTIVE" Type="bit" />
+          <Property Name="balance" Type="numeric" Precision="10" Scale="0" />
+          <Property Name="rate_normalsms" Type="numeric" Precision="5" Scale="0" />
+          <Property Name="rate_smartsms" Type="numeric" Precision="5" Scale="0" />
+          <Property Name="rate_campaign" Type="numeric" Precision="5" Scale="0" />
+          <Property Name="rate_otp" Type="numeric" Precision="5" Scale="0" />
+          <Property Name="username" Type="varchar" MaxLength="20" Nullable="false" />
+          <Property Name="DLTNO" Type="varchar" MaxLength="20" />
+          <Property Name="PWD" Type="varchar" MaxLength="20" />
+          <Property Name="MOBTRACK" Type="varchar" MaxLength="1" />
+          <Property Name="USERTYPE" Type="varchar" MaxLength="10" />
+          <Property Name="createdby" Type="varchar" MaxLength="20" />
+          <Property Name="noofurl" Type="numeric" Precision="10" Scale="0" />
+        </EntityType>
+        <EntityContainer Name="EMIMPANELModelStoreContainer">
+          <EntitySet Name="CUSTOMER" EntityType="Self.CUSTOMER" Schema="dbo" store:Type="Tables" />
+        </EntityContainer>
+      </Schema>
+    </edmx:StorageModels>
+    <!-- CSDL content -->
+    <edmx:ConceptualModels>
+      <Schema Namespace="EMIMPANELModel" Alias="Self" annotation:UseStrongSpatialTypes="false" xmlns:annotation="http://schemas.microsoft.com/ado/2009/02/edm/annotation" xmlns:customannotation="http://schemas.microsoft.com/ado/2013/11/edm/customannotation" xmlns="http://schemas.microsoft.com/ado/2009/11/edm">
+        <EntityType Name="CUSTOMER">
+          <Key>
+            <PropertyRef Name="username" />
+          </Key>
+          <Property Name="SENDERID" Type="String" MaxLength="100" FixedLength="false" Unicode="false" />
+          <Property Name="SMSTYPE" Type="String" MaxLength="10" FixedLength="false" Unicode="false" />
+          <Property Name="FULLNAME" Type="String" MaxLength="100" FixedLength="false" Unicode="false" />
+          <Property Name="ACCOUNTTYPE" Type="String" MaxLength="10" FixedLength="false" Unicode="false" />
+          <Property Name="PERMISSION" Type="String" MaxLength="10" FixedLength="false" Unicode="false" />
+          <Property Name="COMPNAME" Type="String" MaxLength="300" FixedLength="false" Unicode="false" />
+          <Property Name="WEBSITE" Type="String" MaxLength="300" FixedLength="false" Unicode="false" />
+          <Property Name="MOBILE1" Type="String" MaxLength="20" FixedLength="false" Unicode="false" />
+          <Property Name="MOBILE2" Type="String" MaxLength="20" FixedLength="false" Unicode="false" />
+          <Property Name="EMAIL" Type="String" MaxLength="100" FixedLength="false" Unicode="false" />
+          <Property Name="COUNTRYCODE" Type="String" MaxLength="10" FixedLength="false" Unicode="false" />
+          <Property Name="ACCOUNTCREATEDON" Type="DateTime" Precision="3" />
+          <Property Name="EXPIRY" Type="DateTime" Precision="3" />
+          <Property Name="ACTIVE" Type="Boolean" />
+          <Property Name="balance" Type="Decimal" Precision="10" Scale="0" />
+          <Property Name="rate_normalsms" Type="Decimal" Precision="5" Scale="0" />
+          <Property Name="rate_smartsms" Type="Decimal" Precision="5" Scale="0" />
+          <Property Name="rate_campaign" Type="Decimal" Precision="5" Scale="0" />
+          <Property Name="rate_otp" Type="Decimal" Precision="5" Scale="0" />
+          <Property Name="username" Type="String" MaxLength="20" FixedLength="false" Unicode="false" Nullable="false" />
+          <Property Name="DLTNO" Type="String" MaxLength="20" FixedLength="false" Unicode="false" />
+          <Property Name="PWD" Type="String" MaxLength="20" FixedLength="false" Unicode="false" />
+          <Property Name="MOBTRACK" Type="String" MaxLength="1" FixedLength="false" Unicode="false" />
+          <Property Name="USERTYPE" Type="String" MaxLength="10" FixedLength="false" Unicode="false" />
+          <Property Name="createdby" Type="String" MaxLength="20" FixedLength="false" Unicode="false" />
+          <Property Name="noofurl" Type="Decimal" Precision="10" Scale="0" />
+        </EntityType>
+        <EntityContainer Name="EMIMPANELEntities" annotation:LazyLoadingEnabled="true">
+          <EntitySet Name="CUSTOMERs" EntityType="Self.CUSTOMER" />
+        </EntityContainer>
+      </Schema>
+    </edmx:ConceptualModels>
+    <!-- C-S mapping content -->
+    <edmx:Mappings>
+      <Mapping Space="C-S" xmlns="http://schemas.microsoft.com/ado/2009/11/mapping/cs">
+        <EntityContainerMapping StorageEntityContainer="EMIMPANELModelStoreContainer" CdmEntityContainer="EMIMPANELEntities">
+          <EntitySetMapping Name="CUSTOMERs">
+            <EntityTypeMapping TypeName="EMIMPANELModel.CUSTOMER">
+              <MappingFragment StoreEntitySet="CUSTOMER">
+                <ScalarProperty Name="SENDERID" ColumnName="SENDERID" />
+                <ScalarProperty Name="SMSTYPE" ColumnName="SMSTYPE" />
+                <ScalarProperty Name="FULLNAME" ColumnName="FULLNAME" />
+                <ScalarProperty Name="ACCOUNTTYPE" ColumnName="ACCOUNTTYPE" />
+                <ScalarProperty Name="PERMISSION" ColumnName="PERMISSION" />
+                <ScalarProperty Name="COMPNAME" ColumnName="COMPNAME" />
+                <ScalarProperty Name="WEBSITE" ColumnName="WEBSITE" />
+                <ScalarProperty Name="MOBILE1" ColumnName="MOBILE1" />
+                <ScalarProperty Name="MOBILE2" ColumnName="MOBILE2" />
+                <ScalarProperty Name="EMAIL" ColumnName="EMAIL" />
+                <ScalarProperty Name="COUNTRYCODE" ColumnName="COUNTRYCODE" />
+                <ScalarProperty Name="ACCOUNTCREATEDON" ColumnName="ACCOUNTCREATEDON" />
+                <ScalarProperty Name="EXPIRY" ColumnName="EXPIRY" />
+                <ScalarProperty Name="ACTIVE" ColumnName="ACTIVE" />
+                <ScalarProperty Name="balance" ColumnName="balance" />
+                <ScalarProperty Name="rate_normalsms" ColumnName="rate_normalsms" />
+                <ScalarProperty Name="rate_smartsms" ColumnName="rate_smartsms" />
+                <ScalarProperty Name="rate_campaign" ColumnName="rate_campaign" />
+                <ScalarProperty Name="rate_otp" ColumnName="rate_otp" />
+                <ScalarProperty Name="username" ColumnName="username" />
+                <ScalarProperty Name="DLTNO" ColumnName="DLTNO" />
+                <ScalarProperty Name="PWD" ColumnName="PWD" />
+                <ScalarProperty Name="MOBTRACK" ColumnName="MOBTRACK" />
+                <ScalarProperty Name="USERTYPE" ColumnName="USERTYPE" />
+                <ScalarProperty Name="createdby" ColumnName="createdby" />
+                <ScalarProperty Name="noofurl" ColumnName="noofurl" />
+              </MappingFragment>
+            </EntityTypeMapping>
+          </EntitySetMapping>
+        </EntityContainerMapping>
+      </Mapping>
+    </edmx:Mappings>
+  </edmx:Runtime>
+  <!-- EF Designer content (DO NOT EDIT MANUALLY BELOW HERE) -->
+  <Designer xmlns="http://schemas.microsoft.com/ado/2009/11/edmx">
+    <Connection>
+      <DesignerInfoPropertySet>
+        <DesignerProperty Name="MetadataArtifactProcessing" Value="EmbedInOutputAssembly" />
+      </DesignerInfoPropertySet>
+    </Connection>
+    <Options>
+      <DesignerInfoPropertySet>
+        <DesignerProperty Name="ValidateOnBuild" Value="true" />
+        <DesignerProperty Name="EnablePluralization" Value="true" />
+        <DesignerProperty Name="IncludeForeignKeysInModel" Value="true" />
+        <DesignerProperty Name="UseLegacyProvider" Value="false" />
+        <DesignerProperty Name="CodeGenerationStrategy" Value="None" />
+      </DesignerInfoPropertySet>
+    </Options>
+    <!-- Diagram content (shape and connector positions) -->
+    <Diagrams></Diagrams>
+  </Designer>
+</edmx:Edmx>

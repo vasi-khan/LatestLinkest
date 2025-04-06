@@ -1,0 +1,729 @@
+﻿-----------------------------------------
+12-07-24 Vikas Kumar
+
+USE EMIMPANEL
+
+ALTER TABLE [dbo].[stats] ADD User_AgentAutoClick BIT DEFAULT(0) NOT NULL
+ALTER TABLE [dbo].[mobstats] ADD User_AgentAutoClick BIT DEFAULT(0) NOT NULL
+
+ALTER TABLE [dbo].[stats] ADD User_Agent VARCHAR(200)
+ALTER TABLE [dbo].[mobstats] ADD User_Agent VARCHAR(200)
+
+-----------------------------------------
+11-07-24 Vikas Kumar
+
+USE SMPPMAIN
+
+ALTER TABLE settingmast ADD WabaLinkEmailSubject NVARCHAR(200)
+ALTER TABLE settingmast ADD WabaLinkEmailBody NVARCHAR(MAX)
+
+-----------------------------------------
+10-07-24 Vikas Kumar
+
+ALTER TABLE short_urls ADD RichMediaGroupRows VARCHAR(50)
+
+CREATE PROCEDURE Sp_SaveShortURL
+  @LongURL VARCHAR(2000),
+  @ShortURL VARCHAR(500),
+  @UserHostAddress VARCHAR(45),
+  @UserID VARCHAR(20),
+  @mobTrk VARCHAR(1),
+  @mainurl BIT,
+  @domain VARCHAR(200),
+  @name VARCHAR(100) = '',
+  @richmediaurl BIT,
+  @btnName VARCHAR(20) = '',
+  @pageName VARCHAR(20) = '',
+  @RichMediaGroupRows VARCHAR(50) = ''
+AS
+BEGIN
+    INSERT INTO short_urls (long_url, segment, added, ip, num_of_clicks, userid, mobtrack, mainurl, domainname, urlname, richmediaurl, Expiry, buttonName, pageName, RichMediaGroupRows)
+    VALUES (@LongURL, @ShortURL, GETDATE(), @UserHostAddress, 0, @UserID, @mobTrk, @mainurl, @domain, @name, @richmediaurl, DATEADD(yy, 25, GETDATE()), @btnName, @pageName, @RichMediaGroupRows);
+END;
+
+-----------------------------------------
+02-07-24 Vikas Kumar
+
+ALTER TABLE customer ADD TestingCount INT
+
+
+USE [LINKB4SEND]
+GO
+
+/****** Object:  Table [dbo].[FileProcessMaker]    Script Date: 02-Jul-24 3:19:17 PM ******/
+SET ANSI_NULLS ON
+GO
+
+SET QUOTED_IDENTIFIER ON
+GO
+
+CREATE TABLE [dbo].[FileProcessMaker](
+	[id] [int] NULL,
+	[profileid] [varchar](50) NULL,
+	[fileName] [varchar](500) NULL,
+	[tblname] [varchar](150) NULL,
+	[noofrecord] [numeric](18, 0) NULL,
+	[templateid] [varchar](500) NULL,
+	[msg] [nvarchar](2000) NULL,
+	[sender] [varchar](500) NULL,
+	[isprocessed] [bit] NULL,
+	[processedtime] [datetime] NULL,
+	[isschedule] [bit] NULL,
+	[scheduletime] [datetime] NULL,
+	[ccode] [varchar](20) NULL,
+	[smstype] [int] NULL,
+	[shorturlid] [bigint] NULL,
+	[shorturl] [nvarchar](500) NULL,
+	[domainname] [nvarchar](500) NULL,
+	[ucs2] [bit] NULL,
+	[noofsms] [int] NULL,
+	[campname] [varchar](200) NULL,
+	[prevbalance] [decimal](18, 2) NULL,
+	[availablebalance] [decimal](18, 2) NULL,
+	[methodname] [varchar](500) NULL,
+	[InsertTime] [datetime] NULL,
+	[fileext] [varchar](50) NULL,
+	[rate] [decimal](18, 4) NULL,
+	[scheduleDeletedTime] [datetime] NULL,
+	[IsFromRcsFailOver] [bit] NULL,
+	[scratchcard] [bit] NOT NULL,
+	[EventCode] [varchar](50) NULL,
+	[IsDLRData] [bit] NOT NULL,
+	[DlrCode] [varchar](255) NULL,
+	[IsAutoMapping] [bit] NOT NULL,
+	[SaveFileName] [varchar](200) NULL,
+	[CheckerId] [int] NULL,
+	[ApprovedRejected] [varchar](20) NULL,
+	[ApprovedRejectedReason] [nvarchar](2000) NULL,
+	[ApprovedRejectedDateTime] [datetime] NULL,
+	[IsDispose] [bit] NOT NULL,
+	[DisposeReason] [nvarchar](2000) NULL,
+	[DisposeDateTime] [datetime] NULL
+) ON [PRIMARY]
+GO
+
+ALTER TABLE [dbo].[FileProcessMaker] ADD  DEFAULT ((0)) FOR [isprocessed]
+GO
+
+ALTER TABLE [dbo].[FileProcessMaker] ADD  DEFAULT ((0)) FOR [isschedule]
+GO
+
+ALTER TABLE [dbo].[FileProcessMaker] ADD  DEFAULT ((0)) FOR [smstype]
+GO
+
+ALTER TABLE [dbo].[FileProcessMaker] ADD  DEFAULT ((0)) FOR [prevbalance]
+GO
+
+ALTER TABLE [dbo].[FileProcessMaker] ADD  DEFAULT ((0)) FOR [availablebalance]
+GO
+
+ALTER TABLE [dbo].[FileProcessMaker] ADD  DEFAULT (getdate()) FOR [InsertTime]
+GO
+
+ALTER TABLE [dbo].[FileProcessMaker] ADD  DEFAULT ((0)) FOR [IsFromRcsFailOver]
+GO
+
+ALTER TABLE [dbo].[FileProcessMaker] ADD  DEFAULT ((0)) FOR [scratchcard]
+GO
+
+ALTER TABLE [dbo].[FileProcessMaker] ADD  DEFAULT ((0)) FOR [IsDLRData]
+GO
+
+ALTER TABLE [dbo].[FileProcessMaker] ADD  DEFAULT ((0)) FOR [IsAutoMapping]
+GO
+
+ALTER TABLE [dbo].[FileProcessMaker] ADD  DEFAULT ((0)) FOR [IsDispose]
+GO
+
+
+/****** Object:  Synonym [dbo].[fileprocess]    Script Date: 02-Jul-24 3:13:48 PM ******/
+CREATE SYNONYM [dbo].[FileProcessMaker] FOR [LINKB4SEND]..[FileProcessMaker]
+GO
+
+USE [SMPPMAIN]
+GO
+
+/****** Object:  Table [dbo].[MobileDependencyMaker]    Script Date: 02-Jul-24 3:18:23 PM ******/
+SET ANSI_NULLS ON
+GO
+
+SET QUOTED_IDENTIFIER ON
+GO
+
+CREATE TABLE [dbo].[MobileDependencyMaker](
+	[ID] [int] IDENTITY(1,1) NOT NULL,
+	[FileProcessId] [varchar](20) NULL,
+	[MoblieNo] [varchar](20) NULL,
+	[TYPE] [char](1) NULL,
+	[InsertDateTime] [datetime] NULL
+) ON [PRIMARY]
+GO
+
+ALTER TABLE [dbo].[MobileDependencyMaker] ADD  DEFAULT (getdate()) FOR [InsertDateTime]
+GO
+
+
+/****** Object:  Synonym [dbo].[MobileDependency]    Script Date: 02-Jul-24 3:09:43 PM ******/
+CREATE SYNONYM [dbo].[MobileDependencyMaker] FOR [SMPPMAIN]..[MobileDependencyMaker]
+GO
+
+-----------------------------------------
+30-05-24 Vikas Kumar
+
+USE [SMPPMAINLOG]
+GO
+
+/****** Object:  Synonym [dbo].[tblCountry]    Script Date: 31-May-24 11:10:20 AM ******/
+CREATE SYNONYM [dbo].[ERRORCODE] FOR [SMPPMAIN]..[ERRORCODE]
+GO
+
+
+ALTER PROCEDURE [dbo].[SP_Getcampaigrpt]
+(
+  @usr varchar(20),
+  @Fdate date,
+  @tdate date,
+  @camp varchar(500)
+)
+AS
+BEGIN
+   IF(CONVERT(date,@tdate)>=CONVERT(date,GETDATE()))
+     BEGIN
+       SELECT mbs.shorturl_id,mbs.urlid INTO #tmp1 FROM mobstats mbs WITH(NOLOCK)
+       INNER JOIN short_urls su with(nolock) on mbs.shortUrl_id=su.id
+       INNER JOIN mobtrackurl m on su.ID = m.urlid and mbs.urlid=m.id
+       WHERE su.userid=@usr
+       AND mbs.click_date>=@Fdate
+  
+       SELECT CONVERT(date,s.sentdatetime) as requestdate,cast(s.sentdatetime as date) ordDate,
+       f.FILENM, f.campaignname as campaign ,f.senderid as sender,f.id,
+       CAST(round(count(s.id) * isnull(f.smsrate,0)/100,2) as decimal(10,2)) AS credit,count(s.id) AS smscount,
+	   SUM(case when isnull(d.dlvrstatus, '') = 'Delivered' then 1 else 0 end) AS delivered,
+	   SUM(case when isnull(d.dlvrstatus, '') <> 'Delivered' AND d.dlvrstatus IS NOT NULL then 1 else 0 end) AS failed,
+	   SUM(case when d.dlvrstatus IS NULL then 1 else 0 end) AS AWAITED
+       INTO #tmpDelv FROM smsfileupload f WITH(NOLOCK)
+       INNER JOIN MSGSUBMITTED s WITH(NOLOCK) ON f.id=s.fileid AND f.userid = s.profileid
+       LEFT JOIN delivery d WITH(NOLOCK) ON s.msgid = d.msgid
+       WHERE f.userid = @usr
+       AND convert(date,s.sentdatetime) = convert(date,@tdate)
+       AND @camp=(case when @camp='0' then @camp else f.campaignname end)
+       AND isnull(f.campaignname,'')<>''
+       GROUP BY CONVERT(varchar(10),s.sentdatetime,105),cast(s.sentdatetime AS date),f.FILENM,f.campaignname,f.senderid,f.reccount,f.smsrate ,f.id;
+  
+       SELECT CONVERT(date,s.sentdatetime) as requestdate,f.FILENM, f.campaignname as campaign ,f.senderid as sender,f.id,
+	   SUM(case when ms.SHORTURL_ID is null then 0 else 1 end) AS openmsg,MAX(s.smstext) AS SMSText  
+       INTO #tmpCamp FROM smsfileupload f WITH(NOLOCK)
+       INNER JOIN MSGSUBMITTED s WITH(NOLOCK) on f.id=s.fileid and f.userid = s.profileid   
+       LEFT JOIN short_urls sh WITH(NOLOCK) on sh.userid = f.userid and f.shortURLId = sh.id  
+       LEFT JOIN mobtrackurl m WITH(NOLOCK) on sh.ID = m.urlid and m.mobile=s.TOMOBILE AND F.ID=M.fileId   
+       LEFT JOIN #tmp1 ms on sh.ID = ms.SHORTURL_ID and ms.urlid=m.id  
+       WHERE f.userid = @usr   
+       AND convert(date,s.sentdatetime) = convert(date,@tdate)--between convert(date,@Fdate) and  
+       AND @camp=(case when @camp='0' then @camp else f.campaignname end)  
+       AND isnull(f.campaignname,'')<>''   
+       GROUP BY CONVERT(date,s.sentdatetime),f.FILENM,f.campaignname,f.senderid,f.reccount,f.smsrate ,f.id;
+  
+      SELECT RequestDate,RequestTime,FILENM,Campaign,sender,fileid,
+	  SUM(credit) credit,SUM(smscount) smscount,SUM(delivered) delivered,SUM(delivered)*100/SUM(smscount) [delivered_p],SUM(failed) failed,SUM(failed)*100/SUM(smscount) [failed_p],  
+      SUM(AWAITED) AWAITED,SUM(AWAITED)*100/SUM(smscount) [AWAITED_p],SUM(openmsg)openmsg,SUM(openmsg)*100/SUM(smscount) [openmsg_p],message FROM
+      (
+        SELECT
+		(CASE WHEN ISNULL(SMS.schedule,'')<>'' THEN CONVERT(varchar(30),SMS.schedule,103) ELSE CONVERT(varchar(30),SMS.UPLOADTIME,103) END) AS RequestDate,
+		(CASE WHEN ISNULL(SMS.schedule,'')<>'' THEN CONVERT(varchar(30),SMS.schedule,108) ELSE CONVERT(varchar(30),SMS.UPLOADTIME,108) END) AS RequestTime,
+		DCR.FILENM,fileid,Campaign,sender,credit,smscount,delivered,failed,AWAITED,openmsg ,'"'+message+'"' message  
+        FROM DailyCampRpt DCR WITH(NOLOCK)
+		INNER JOIN SMSFILEUPLOAD SMS WITH(NOLOCK) ON SMS.ID=fileid
+        WHERE @camp=(CASE WHEN @camp='0' then @camp else Campaign end)
+        AND DCR.userid=@usr  
+        AND convert(date,RequestDate) >= convert(date,@fdate)
+        AND convert(date,RequestDate) < convert(date,@tdate)
+        UNION ALL
+        SELECT 
+		(CASE WHEN ISNULL(SMS.schedule,'')<>'' THEN CONVERT(varchar(30),SMS.schedule,103) ELSE CONVERT(varchar(30),SMS.UPLOADTIME,103) END) AS RequestDate,
+		(CASE WHEN ISNULL(SMS.schedule,'')<>'' THEN CONVERT(varchar(30),SMS.schedule,108) ELSE CONVERT(varchar(30),SMS.UPLOADTIME,108) END) AS RequestTime,
+		t.FILENM,t.ID as fileid,t.Campaign,t.sender,credit,smscount,delivered,failed,AWAITED,openmsg,c.SMSText AS message
+        FROM #tmpDelv t
+		INNER JOIN #tmpCamp c ON t.id =c.ID
+		INNER JOIN SMSFILEUPLOAD SMS WITH(NOLOCK) ON SMS.ID=t.ID
+      )a  
+      GROUP BY RequestDate,RequestTime,FILENM,Campaign,fileid,sender,message  
+      ORDER BY a.RequestDate
+  END
+  ELSE
+   BEGIN
+      SELECT 
+	    (CASE WHEN ISNULL(SMS.schedule,'')<>'' THEN CONVERT(varchar(30),SMS.schedule,103) ELSE CONVERT(varchar(30),SMS.UPLOADTIME,103) END) AS RequestDate,
+		(CASE WHEN ISNULL(SMS.schedule,'')<>'' THEN CONVERT(varchar(30),SMS.schedule,108) ELSE CONVERT(varchar(30),SMS.UPLOADTIME,108) END) AS RequestTime,
+	    DCR.FILENM, fileid, Campaign, sender, credit, smscount, delivered , delivered*100/smscount [delivered_p],
+	    failed, failed*100/smscount [failed_p], AWAITED, AWAITED*100/smscount [AWAITED_p], openmsg, openmsg*100/smscount [openmsg_p],message
+      FROM DailyCampRpt DCR WITH(NOLOCK)
+	  INNER JOIN SMSFILEUPLOAD SMS WITH(NOLOCK) ON SMS.ID=fileid
+      WHERE @camp=(CASE WHEN @camp='0' THEN @camp ELSE Campaign END)
+      AND DCR.userid=@usr
+      AND CONVERT(DATE,RequestDate) BETWEEN CONVERT(DATE,@Fdate) AND CONVERT(DATE,@tdate)
+      ORDER BY DCR.RequestDate
+   END
+END
+
+--exec Sp_GetSMSReport_user_ConsolidatedDownloadDETAIL '2023-07-28','2023-07-28 23:59:59.997','HONDAE','DD003E2','','','',''
+ALTER procedure [dbo].[Sp_GetSMSReport_user_ConsolidatedDownloadDETAIL]
+(
+  @fdate varchar(50),
+  @tDate varchar(50),
+  @sender varchar(50),		
+  @user varchar(50),
+  @campnm varchar(50)='',
+  @mobno varchar(15)='',
+  @templateid varchar(50)='',
+  @ReportType varchar(50)=''
+)
+AS
+BEGIN
+  DECLARE @sql varchar(MAX)
+
+SET @sql = N'select convert(varchar,m.sentdatetime,102) as SMSdate, m.MSGID as MessageId, m.TOMOBILE as MobileNo, m.senderid as Sender, ''''+msgtext+'''' as Message,
+             convert(varchar,m.sentdatetime,106) + '' '' + convert(varchar,m.sentdatetime,108) as SentDate,
+             convert(varchar,d.dlvrtime,106) + '' '' + convert(varchar,d.dlvrtime,108) as DeliveredDate,
+             CASE WHEN d.dlvrstatus is null then ''UNKNOWN'' ELSE CASE WHEN d.dlvrstatus=''Delivered'' then ''DELIVERED'' ELSE ''FAILED'' END END AS MessageState, 
+			 ''''+d.dlvrtext+'''' as RESPONSE,d.err_code AS ErrorCode,ec.descr AS ErrorDescription
+             FROM MSGSUBMITTED m WITH(NOLOCK) 
+             LEFT JOIN DELIVERY d WITH(NOLOCK) on m.msgid=d.msgid
+			 LEFT JOIN (SELECT CODE, MAX(descr) descr FROM ERRORCODE WITH(NOLOCK) GROUP BY CODE) ec  ON d.err_code=ec.code
+             WHERE m.PROFILEID=''' + @user + '''  and m.sentdatetime between ''' + @fdate + ''' and ''' + @tDate +'''';
+
+  IF(@ReportType='DELIVERED')
+   BEGIN
+     SET @sql = @sql + N' and d.dlvrstatus=''Delivered''';
+   END
+  IF(@ReportType='FAILED')
+   BEGIN
+     SET @sql = @sql + N' and d.dlvrstatus<>''Delivered''';
+   END
+  IF(@sender<>'' or @sender<>'0')
+   BEGIN
+     SET @sql =@sql +N' and m.senderid=''' + @sender + '''';
+   END
+  
+  EXEC(@sql)
+END
+
+
+ALTER procedure [dbo].[Sp_GetSMSReport_User_ConsolidatedDETAIL]
+(
+  @fdate varchar(50),
+  @tDate varchar(50),
+  @sender varchar(50),
+  @user varchar(50),
+  @campnm varchar(50)='',
+  @mobno varchar(15),
+  @templateid varchar(50),
+  @ReportType varchar(50)
+)
+AS
+   DECLARE @str VARCHAR(MAX)='',
+   @sql VARCHAR(MAX)='',
+   @SHOWMOBILEXXXX AS INT,
+   @TimeDifferenceInMinute INT      
+BEGIN 
+    SELECT @TimeDifferenceInMinute = TimeDifferenceInMinute FROM tblCountry WITH(NOLOCK) WHERE counryCode IN (SELECT defaultCountry FROM CUSTOMER WITH(NOLOCK) WHERE username = @user);
+    SELECT @SHOWMOBILEXXXX=isnull(showmobilexxxx,0) FROM customer WITH(NOLOCK) WHERE username= @user;
+    SET @SHOWMOBILEXXXX=isnull(@SHOWMOBILEXXXX,0);
+	
+  IF(@SHOWMOBILEXXXX = 1)
+    BEGIN
+       SET @str=N' left(convert(varchar, m.tomobile), len(convert(varchar, m.tomobile)) - 4) + ''XXXX''';
+    END
+    ELSE
+    BEGIN
+       SET @str=N'convert(varchar,m.tomobile)';
+    END        
+       SET @sql=N'select convert(varchar,sentdatetime,102) as SMSdate, m.msgid+'''''''' as MessageId, '+@str+' as MobileNo, m.senderid as Sender,
+           DATEADD(MINUTE,'+CAST(@TimeDifferenceInMinute as varchar)+',convert(varchar,m.sentdatetime,106) + '' '' + convert(varchar,m.sentdatetime,108)) as SentDate,
+           case when d.dlvrtime is null then '''' else DATEADD(MINUTE,'+CAST(@TimeDifferenceInMinute as varchar)+',convert(varchar,d.dlvrtime,106) + '' '' + convert(varchar,d.dlvrtime,108)) end as DeliveredDate,      
+           Replace(Replace(isnull(m.smstext,m.msgtext),CHAR(10),''''),CHAR(13),'''') as Message, CASE WHEN d.dlvrstatus is null then ''UNKNOWN'' ELSE CASE WHEN d.dlvrstatus=''Delivered'' then ''DELIVERED'' ELSE ''FAILED'' END END       
+           AS MessageState, isnull(d.dlvrtext,'''') as RESPONSE,d.err_code AS ErrorCode,ec.descr AS ErrorDescription
+		   FROM MSGSUBMITTEDLog m with(nolock)'      
+      
+        IF (@campnm != '' AND @campnm !='0')
+        BEGIN      
+            SET @sql = @sql + N' INNER JOIN smsfileupload u with (nolock) on m.fileid=u.id';      
+        END
+            SET @sql = @sql + N' LEFT JOIN DELIVERYLog d WITH(NOLOCK) ON m.msgid=d.msgid
+								 LEFT JOIN (SELECT CODE, MAX(descr) descr FROM ERRORCODE WITH(NOLOCK) GROUP BY CODE) ec  ON d.err_code=ec.code
+			                     WHERE m.PROFILEID='''+@user+'''';
+      
+        IF (@fdate != '' AND @tDate != '')
+        BEGIN
+            SET @sql = @sql + N' AND m.sentdatetime between '''+@fdate+''' and  '''+@tDate+'''';
+        END      
+        IF (@sender <> '' and @sender <> '0')
+       BEGIN      
+       SET @sql = @sql + N' and m.senderid= ''' + @sender + '''';      
+       END      
+      
+       if (@campnm != '' AND @campnm != '0')      
+       BEGIN      
+       SET @sql = @sql + N' and u.campaignname = ''' + @campnm + '''';      
+       END      
+       if (@mobno <> '' and @mobno <> '0')       
+                            begin      
+                            set @sql = @sql + N' and m.tomobile like ''%'+@mobno+'%''';      
+                      END      
+       if (@ReportType <> ''and @ReportType = 'DELIVERED')       
+                            begin      
+                              set @sql = @sql + N' and d.dlvrstatus=''Delivered''';      
+                            end      
+       if (@ReportType <> ''and @ReportType = 'FAILED')       
+                            begin      
+                              set @sql = @sql + N' and d.dlvrstatus!=''Delivered''';      
+                            end      
+       if (@templateid <> '0' and @templateid <> '')       
+                            begin      
+                              set @sql = @sql + N' and m.templateid ='''+@templateid+'''';      
+                            end       
+       SET @sql = @sql + N' order by m.sentdatetime desc';      
+	   PRINT(@sql)
+     EXEC(@sql)      
+ END     
+
+
+CREATE SYNONYM [dbo].[MobileDependency] FOR [SMPPMAIN]..[MobileDependency]
+GO
+
+
+CREATE TABLE MobileDependency(
+	[ID] [int] IDENTITY(1,1) NOT NULL,
+	[FileProcessId] [varchar](20) NULL,
+	[MoblieNo] [varchar](20) NULL,
+	[TYPE] char(1) NULL,
+	[InsertDateTime] [datetime] NULL default(getdate())
+)
+GO
+
+-----------------------------------------
+28-05-24 Vikas Kumar
+
+ALTER PROCEDURE [dbo].[SP_Getcampaigrpt]  
+(  
+  @usr varchar(20),
+  @Fdate date,
+  @tdate date,
+  @camp varchar(500)
+)
+AS
+BEGIN
+IF(CONVERT(date,@tdate)>=CONVERT(date,GETDATE()))
+BEGIN
+select mbs.shorturl_id,mbs.urlid into #tmp1  from mobstats mbs with(nolock)
+INNER JOIN short_urls su with(nolock) on mbs.shortUrl_id=su.id  
+INNER JOIN mobtrackurl m on su.ID = m.urlid and mbs.urlid=m.id 
+where su.userid=@usr   
+and mbs.click_date>=@Fdate /* group by mbs.shorturl_id,mbs.urlid    */
+  
+select CONVERT(date,s.sentdatetime) as requestdate,cast(s.sentdatetime as date) ordDate,  
+f.FILENM, f.campaignname as campaign ,f.senderid as sender,f.id,  
+Cast(round(count(s.id) * isnull(f.smsrate,0)/100,2) as decimal(10,2)) as credit,count(s.id) as smscount  
+,sum(case when isnull(d.dlvrstatus, '') = 'Delivered' then 1 else 0 end) as delivered  
+,sum(case when isnull(d.dlvrstatus, '') <> 'Delivered' AND d.dlvrstatus IS NOT NULL then 1 else 0 end) as failed  
+,sum(case when d.dlvrstatus IS NULL then 1 else 0 end) as AWAITED  
+into #tmpDelv  
+from smsfileupload f with(nolock)  
+inner join MSGSUBMITTED s with(nolock) on f.id=s.fileid and f.userid = s.profileid  
+left join delivery d with(nolock) on s.msgid = d.msgid   
+where f.userid = @usr   
+and convert(date,s.sentdatetime) = convert(date,@tdate) --and convert(date,@tdate)  
+and @camp=(case when @camp='0' then @camp else f.campaignname end)  
+and isnull(f.campaignname,'')<>''   
+group by CONVERT(varchar(10),s.sentdatetime,105),cast(s.sentdatetime as date)  
+,f.FILENM,f.campaignname,f.senderid,  
+f.reccount,f.smsrate ,f.id;  
+  
+select CONVERT(date,s.sentdatetime) as requestdate,  
+f.FILENM, f.campaignname as campaign ,f.senderid as sender,f.id  
+,sum(case when ms.SHORTURL_ID is null then 0 else 1 end) AS openmsg,MAX(s.smstext) AS SMSText  
+ into #tmpCamp   
+ from smsfileupload f with(nolock)  
+ inner join MSGSUBMITTED s with(nolock) on f.id=s.fileid and f.userid = s.profileid   
+ left join short_urls sh with(nolock) on sh.userid = f.userid and f.shortURLId = sh.id  
+ LEFT join mobtrackurl m with(nolock) on sh.ID = m.urlid and m.mobile=s.TOMOBILE AND F.ID=M.fileId   
+ left join #tmp1 ms on sh.ID = ms.SHORTURL_ID and ms.urlid=m.id  
+where f.userid = @usr   
+and convert(date,s.sentdatetime) = convert(date,@tdate)--between convert(date,@Fdate) and  
+and @camp=(case when @camp='0' then @camp else f.campaignname end)  
+and isnull(f.campaignname,'')<>''   
+group by CONVERT(date,s.sentdatetime),f.FILENM,f.campaignname,f.senderid,f.reccount,f.smsrate ,f.id;
+  
+  
+SELECT convert(varchar(30),RequestDate,103)RequestDate,FILENM,Campaign,sender,fileid,sum(credit) credit,sum(smscount) smscount,sum(delivered) delivered,sum(delivered)*100/sum(smscount) [delivered_p],sum(failed) failed,sum(failed)*100/sum(smscount) [failed_p],  
+sum(AWAITED) AWAITED,sum(AWAITED)*100/sum(smscount) [AWAITED_p],sum(openmsg)openmsg,sum(openmsg)*100/sum(smscount) [openmsg_p],message from   
+ (   
+ SELECT convert(date,RequestDate) RequestDate ,FILENM,fileid,Campaign,sender,credit,smscount,delivered,failed,AWAITED,openmsg ,'"'+message+'"' message  
+ FROM DailyCampRpt  
+ WHERE @camp=(CASE WHEN @camp='0' then @camp else Campaign end)  
+ AND userid=@usr  
+ AND  convert(date,RequestDate) >= convert(date,@fdate)   
+ AND  convert(date,RequestDate) < convert(date,@tdate)   
+ UNION ALL  
+ SELECT CONVERT(DATE,T.RequestDate)RequestDate,t.FILENM,t.ID as fileid,t.Campaign,t.sender,credit,smscount,delivered,failed,AWAITED,openmsg,c.SMSText AS message  
+    FROM #tmpDelv t INNER JOIN #tmpCamp c ON t.id =c.ID  
+ )a  
+ GROUP BY convert(varchar(30),RequestDate,103),convert(date,RequestDate) ,FILENM,Campaign,fileid,sender,message  
+ order by   a.RequestDate  
+END  
+ELSE  
+BEGIN  
+SELECT convert(varchar(30),RequestDate,103) RequestDate ,FILENM,fileid,Campaign,sender,credit,smscount,delivered ,delivered*100/smscount [delivered_p],failed,failed*100/smscount [failed_p],AWAITED,AWAITED*100/smscount [AWAITED_p],openmsg ,openmsg*100/smscount [openmsg_p],'Z'+message+'"' message  
+ FROM DailyCampRpt  
+ WHERE @camp=(CASE WHEN @camp='0' then @camp else Campaign end)  
+ AND userid=@usr  
+ AND  CONVERT(DATE,RequestDate) BETWEEN CONVERT(DATE,@Fdate) AND CONVERT(DATE,@tdate)  
+ order by   DailyCampRpt.RequestDate  
+END  
+--order by t.ordDate  
+END
+
+
+-----------------------------------------
+28-05-24 DKS
+
+alter PROCEDURE [dbo].[SP_GetDELIVERYREPORTTODAYSYSADMINFILTER]  
+(  
+@FromDate varchar(50),  
+@Todate varchar(50),  
+@SenderId varchar(50),  
+@CampaignWise varchar(50),  
+@TemplateId varchar(50),  
+@USERID varchar(50),  
+@MasterType varchar(50),  
+@ReportType varchar(50)='',  
+@UserType varchar(50)='',  
+@EmpCode varchar(50)='',  
+@mobno varchar(15)='',
+@DLTNO varchar(50)=''
+)  
+AS  
+BEGIN  
+
+DECLARE @sql varchar(max)=''  
+  
+SET @sql=N'select row_number() over (Order by c.userName ) as Sln, c.userName, ''NA'' as SenderID, count(s.id) submitted,  
+sum(case when isnull(d.dlvrstatus,'''')=''Delivered'' then 1 else 0 end) as delivered,  
+sum(case when isnull(d.dlvrstatus,'''')<>''Delivered'' AND d.dlvrstatus IS NOT NULL then 1 else 0 end) as failed,  
+sum(case when d.dlvrstatus IS NULL then 1 else 0 end) as unknown  
+from customer c with (nolock)  
+ inner join MSGSUBMITTEDlog s with (nolock) on c.username = s.profileid   
+  left join deliverylog d with (nolock) on s.msgid = d.msgid'  
+  
+   if (@MasterType='')  
+   begin  
+   Select Top 1 @DLTNO=dltno from customer where username=@USERID  
+   SET @sql = @sql + N' inner join smsfileupload su with(nolock) on su.USERID=c.username';   
+   end  
+  
+   SET @sql = @sql + N' where Convert(date,s.sentdatetime)>= '''+@FromDate+''' and Convert(date,s.sentdatetime)<= '''+@Todate+''''   
+
+   if (@UserType='ADMIN')  
+   begin  
+	SET @sql = @sql + N' and c.dltno = '''+@DLTNO+'''';   
+   end  
+  
+   if (@UserType='BD')  
+   begin  
+   Select Top 1 @DLTNO=dltno from customer where username=@USERID  
+   SET @sql = @sql + N' where Convert(date,s.sentdatetime)>= '''+@FromDate+''' and Convert(date,s.sentdatetime)<= '''+@Todate+'''   
+   and c.empcode = '''+@EmpCode+'''';   
+   end  
+  
+    if (@UserType<>'BD' and @UserType<>'ADMIN')  
+   begin  
+   SET @sql = @sql + N' where Convert(date,s.sentdatetime)>= '''+@FromDate+''' and Convert(date,s.sentdatetime)<= '''+@Todate+'''';   
+   end  
+  
+   if (@ReportType='Delivered')  
+   begin  
+   SET @sql = @sql + N' and d.dlvrstatus=''Delivered''';   
+   end  
+  
+   if(@ReportType='Rejected')  
+   begin  
+   SET @sql = @sql + N' and d.dlvrstatus<>''Delivered''';   
+   end  
+  
+   if (@MasterType='')  
+   begin  
+   Select Top 1 @DLTNO=dltno from customer where username=@USERID  
+   SET @sql = @sql + N' AND su.campaignname = '''+@CampaignWise+'''';   
+   end  
+  
+   if(@SenderId<>'0')  
+   begin  
+   SET @sql = @sql + N' and s.SENDERID= '''+@SenderId+''' ';   
+   end  
+     
+   if(@USERID<>'')  
+   begin  
+   SET @sql = @sql + N' and s.profileid = '''+@USERID+''' ';   
+   end  
+  
+   if(@TemplateId<>'0')  
+   begin  
+   SET @sql = @sql + N' and s.templateid = '''+@TemplateId+''' ';   
+   end  
+  
+   if (@mobno <> ''and @mobno <> '0')   
+   begin  
+   SET @sql = @sql + N' and s.tomobile like ''%'+@mobno+'%''';  
+   end  
+  
+   if(@SenderId<>'0')  
+   begin  
+   SET @sql = @sql + N' group by c.userName ,s.SenderID  ';   
+   end  
+  
+   if(@SenderId='0')  
+   begin  
+   SET @sql = @sql + N' group by c.userName  ';   
+   end  
+  exec(@sql)  
+END  
+
+
+
+GO
+
+
+
+
+  
+ALTER PROCEDURE [dbo].[SP_GetDELIVERYREPORTTODAYSYSADMINSingle]    
+(    
+@FromDate varchar(50),    
+@Todate varchar(50),    
+@SenderId varchar(50),    
+@CampaignWise varchar(50),    
+@TemplateId varchar(50),    
+@USERID varchar(50),    
+@MasterType varchar(50),    
+@ReportType varchar(50)='',    
+@UserType varchar(50)='',    
+@EmpCode varchar(50)='',    
+@mobno varchar(15)='',  
+@DLTNO VARCHAR(50)=''    
+)    
+AS    
+BEGIN    
+Declare @sql varchar(max)='',    
+@sql1 varchar(max)='',    
+@FinalSql varchar(max)=''    
+    
+  PRINT '1'  
+SET @sql=N'select row_number() over (Order by c.userName ) as Sln, c.userName, ''NA'' as SenderID, count(s.id) submitted,    
+sum(case when isnull(d.dlvrstatus,'''')=''Delivered'' then 1 else 0 end) as delivered,    
+sum(case when isnull(d.dlvrstatus,'''')<>''Delivered'' AND d.dlvrstatus IS NOT NULL then 1 else 0 end) as failed,    
+sum(case when d.dlvrstatus IS NULL then 1 else 0 end) as unknown into #t1    
+from customer c with (nolock)    
+ inner join MSGSUBMITTEDlog s with (nolock) on c.username = s.profileid     
+  left join deliverylog d with (nolock) on s.msgid = d.msgid'    
+  PRINT '2'  
+   if (@MasterType='')    
+   begin    
+   Select Top 1 @DLTNO=dltno from customer where username=@USERID    
+   SET @sql = @sql + N' inner join smsfileupload su with(nolock) on su.USERID=c.username';     
+   end    
+    
+   if (@UserType='ADMIN')    
+   begin    
+   /* Select Top 1 @DLTNO=dltno from customer where username=@USERID   */  
+  
+   SET @sql = @sql + N' where Convert(date,s.sentdatetime)>= '''+@FromDate+''' and Convert(date,s.sentdatetime)<= '''+@Todate+'''     
+   and c.dltno = '''+@DLTNO+'''';     
+   end    
+    
+   if (@UserType='BD')    
+   begin    
+   /* Select Top 1 @DLTNO=dltno from customer where username=@USERID  */  
+   SET @sql = @sql + N' where Convert(date,s.sentdatetime)>= '''+@FromDate+''' and Convert(date,s.sentdatetime)<= '''+@Todate+'''     
+   and c.empcode = '''+@EmpCode+'''';     
+   end    
+    
+    if (@UserType<>'BD' and @UserType<>'ADMIN')    
+   begin    
+   SET @sql = @sql + N' where Convert(date,s.sentdatetime)>= '''+@FromDate+''' and Convert(date,s.sentdatetime)<= '''+@Todate+'''';     
+   end    
+    
+   if (@ReportType='Delivered')    
+   begin    
+   SET @sql = @sql + N' and d.dlvrstatus=''Delivered''';     
+   end    
+    
+   if(@ReportType='Rejected')    
+   begin    
+   SET @sql = @sql + N'and d.dlvrstatus<>''Delivered''';     
+   end    
+    
+   if (@MasterType='')    
+   begin    
+   Select Top 1 @DLTNO=dltno from customer where username=@USERID    
+   SET @sql = @sql + N' AND su.campaignname = '''+@CampaignWise+'''';     
+   end    
+    
+   if(@SenderId<>'0')    
+   begin    
+   SET @sql = @sql + N' and s.SENDERID= '''+@SenderId+''' ';     
+   end    
+       
+   if(@USERID<>'')    
+   begin    
+   SET @sql = @sql + N' and s.profileid = '''+@USERID+'''  ';     
+   end    
+    
+   if(@TemplateId<>'0')    
+   begin    
+   SET @sql = @sql + N' and s.templateid = '''+@TemplateId+''' ';     
+   end    
+    
+   if (@mobno <> ''and @mobno <> '0')     
+   begin    
+   SET @sql = @sql + N' and s.tomobile like ''%'+@mobno+'%''';    
+   end    
+    
+   if(@SenderId<>'0')    
+   begin    
+     SET @sql = @sql + N' group by c.userName ,s.SenderID  ';     
+     set @sql1 = N'select ''NA'' AS Username, ''NA'' AS SenderID,sum(submitted) AS submitted,    
+         sum(delivered) AS Delivered,sum(failed) AS Failed,sum(unknown) AS unknown from #t1';    
+   end    
+    
+   if(@SenderId='0')    
+   begin    
+   SET @sql = @sql + N' group by c.userName  ';     
+   set @sql1 = N'select ''NA'' AS Username, ''NA'' AS SenderID,sum(submitted) AS submitted,    
+         sum(delivered) AS Delivered,sum(failed) AS Failed,sum(unknown) AS unknown from #t1';    
+   end    
+      
+    set @FinalSql=@sql + ' '+@sql1;    
+ PRINT @FinalSql  
+  exec(@FinalSql)    
+      
+END 
+
+
+
+22/05/2024 Vikas Start-----------------      updated on 252 emimpanel. NOT UPDATED IN AWS
+----------------ADD Column START-----------------
+ALTER TABLE FILEPROCESS ADD IsAutoMapping BIT default(0) NOT NULL
+ALTER TABLE fileprocess ADD SaveFileName VARCHAR(200);
+
+
+
+10/07/2024 Naved Start-----------------      updated on 19 EMIMPANEL
+alter table SendWABAOnLinkClick add var1 varchar(100)
+alter table SendWABAOnLinkClick add var2 varchar(100)
+alter table SendWABAOnLinkClick add var3 varchar(100)
+alter table SendWABAOnLinkClick add var4 varchar(100)
+alter table SendWABAOnLinkClick add var5 varchar(100)
+alter table SendWABAOnLinkClick add var6 varchar(100)
+alter table SendWABAOnLinkClick add var7 varchar(100)
+alter table SendWABAOnLinkClick add var8 varchar(100)
+alter table SendWABAOnLinkClick add var9 varchar(100)
+alter table SendWABAOnLinkClick add var10 varchar(100)

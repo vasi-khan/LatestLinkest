@@ -1,0 +1,303 @@
+﻿<!DOCTYPE html>
+<html lang="en">
+
+<head>
+
+    <meta charset="utf-8">
+    <meta http-equiv="X-UA-Compatible" content="IE=edge">
+    <meta name="viewport" content="width=device-width, initial-scale=1, shrink-to-fit=no">
+    <meta name="description" content="">
+    <meta name="author" content="">
+
+    <title>Media Preview - MIM Admin</title>
+
+    <!-- Custom fonts for this template-->
+    <link href="https://fonts.googleapis.com/css?family=Nunito:200,200i,300,300i,400,400i,600,600i,700,700i,800,800i,900,900i" rel="stylesheet">
+
+    <!-- <link rel="stylesheet" href="css/neumorphism.css"> -->
+
+    <link rel="stylesheet" href="https://stackpath.bootstrapcdn.com/bootstrap/4.5.2/css/bootstrap.min.css" integrity="sha384-JcKb8q3iqJ61gNV9KGb8thSsNjpSL0n8PARn9HuZOnIxN0hoP+VmmDGMN5t9UJ0Z" crossorigin="anonymous">
+
+</head>
+<style>
+    /*
+     * Base structure
+     */
+
+    html,
+    body {
+        height: 100%;
+        /* background-color: #333; */
+    }
+
+    body {
+        display: -ms-flexbox;
+        display: flex;
+        color: #fff;
+    }
+
+    .main-view {
+        /* background: url(data/patna_desktop_banner.jpg) no-repeat; */
+        background-position: center;
+        background-attachment: scroll;
+        -o-background-size: cover;
+        -moz-background-size: cover;
+        -webkit-background-size: cover;
+        background-size: cover;
+        background-repeat: no-repeat;
+        background-color: #000;
+    }
+
+    video {
+        width: 100%;
+    }
+
+    .btn-primary {
+        color: #27648a;
+        background-color: #e6e7ee;
+        font-weight: 900;
+    }
+
+    .btn {
+        border-color: #FFAB00;
+        box-shadow: none;
+    }
+
+    /*
+     * Cover
+     */
+    .cover {
+        padding: 0 1.5rem;
+    }
+
+        .cover .btn-lg {
+            padding: .75rem 1.25rem;
+            font-weight: 700;
+        }
+
+    .container, .container-fluid, .container-lg,
+    .container-md, .container-sm, .container-xl {
+        width: 100%;
+        padding-right: 15px;
+        padding-left: 15px;
+        margin-right: auto;
+        margin-left: auto;
+    }
+
+
+
+    /* Form */
+
+    .form-label-group {
+        position: relative;
+        margin-bottom: 1rem;
+    }
+
+        .form-label-group input,
+        .form-label-group label {
+            height: 3.125rem;
+            padding: .75rem;
+        }
+
+        .form-label-group label {
+            position: absolute;
+            top: 0;
+            left: 0;
+            display: block;
+            width: 100%;
+            margin-bottom: 0; /* Override default `<label>` margin */
+            line-height: 1.5;
+            color: #495057;
+            pointer-events: none;
+            cursor: text; /* Match the input under the label */
+            border: 1px solid transparent;
+            border-radius: .25rem;
+            transition: all .1s ease-in-out;
+        }
+
+        .form-label-group input::-webkit-input-placeholder {
+            color: transparent;
+        }
+
+        .form-label-group input::-moz-placeholder {
+            color: transparent;
+        }
+
+        .form-label-group input:-ms-input-placeholder {
+            color: transparent;
+        }
+
+        .form-label-group input::-ms-input-placeholder {
+            color: transparent;
+        }
+
+        .form-label-group input::placeholder {
+            color: transparent;
+        }
+
+        .form-label-group input:not(:-moz-placeholder-shown) {
+            padding-top: 1.25rem;
+            padding-bottom: .25rem;
+        }
+
+        .form-label-group input:not(:-ms-input-placeholder) {
+            padding-top: 1.25rem;
+            padding-bottom: .25rem;
+        }
+
+        .form-label-group input:not(:placeholder-shown) {
+            padding-top: 1.25rem;
+            padding-bottom: .25rem;
+        }
+
+        .form-label-group input:not(:-moz-placeholder-shown) ~ label {
+            padding-top: .25rem;
+            padding-bottom: .25rem;
+            font-size: 12px;
+            color: #777;
+        }
+
+        .form-label-group input:not(:-ms-input-placeholder) ~ label {
+            padding-top: .25rem;
+            padding-bottom: .25rem;
+            font-size: 12px;
+            color: #777;
+        }
+
+        .form-label-group input:not(:placeholder-shown) ~ label {
+            padding-top: .25rem;
+            padding-bottom: .25rem;
+            font-size: 12px;
+            color: #777;
+        }
+
+    /* Fallback for Edge
+    -------------------------------------------------- */
+    @supports (-ms-ime-align: auto) {
+        .form-label-group {
+            display: -ms-flexbox;
+            display: flex;
+            -ms-flex-direction: column-reverse;
+            flex-direction: column-reverse;
+        }
+
+            .form-label-group label {
+                position: static;
+            }
+
+            .form-label-group input::-ms-input-placeholder {
+                color: #777;
+            }
+    }
+
+
+    /* End Form */
+
+    /* // Extra small devices (portrait phones, less than 576px) */
+    @media (max-width: 575.98px) {
+        .main-view {
+            /* background: url(data/Doc.png); */
+            background-position: center;
+            background-attachment: scroll;
+            -o-background-size: cover;
+            -moz-background-size: cover;
+            -webkit-background-size: cover;
+            background-size: cover;
+            background-repeat: no-repeat;
+        }
+
+        .btn-primary {
+            font-weight: 700;
+            font-size: 14px;
+        }
+    }
+
+    /* // Small devices (landscape phones, 576px and up) */
+    @media (min-width: 576px) and (max-width: 767.98px) {
+
+        .main-view {
+            /* background: url(data/Doc.png) no-repeat; */
+            background-position: center;
+            background-attachment: scroll;
+            -o-background-size: cover;
+            -moz-background-size: cover;
+            -webkit-background-size: cover;
+            background-size: cover;
+            background-repeat: no-repeat;
+        }
+
+        .btn-primary {
+            font-size: 14px;
+        }
+    }
+
+    /* // Medium devices (tablets, 768px and up) */
+    @media (min-width: 768px) and (max-width: 991.98px) {
+    }
+
+    /* // Large devices (desktops, 992px and up) */
+    @media (min-width: 992px) and (max-width: 1199.98px) {
+    }
+
+    /* // Extra large devices (large desktops, 1200px and up) */
+
+    @media (min-width: 1200px) {
+        .container, .container-lg, .container-md,
+        .container-sm, .container-xl {
+            max-width: 1140px;
+            width: 40%;
+        }
+
+        .cover-container {
+            max-width: 75%;
+        }
+    }
+</style>
+<body class="main-view">
+    <div class="cover-container d-flex w-100 h-100 pb-3 mx-auto flex-column">
+        <header class="masthead mb-auto">
+            <div class="inner text-center py-4 bg-white" style="display:###LOGODISPLAY###;">
+                <!-- <h3 class="masthead-brand">Cover</h3> -->
+                <img src="###LOGOFILE###" alt="linkext logo" width="150px">
+                <!-- <div class="d-block d-sm-none mb-5">
+                   <img src="data/bmw-bg.jpg" alt="" class="img-fluid">
+                </div> -->
+            </div>
+        </header>
+
+        <main role="main" class="inner mb-auto">
+            <div class="w-100" style="display:###VIDEODISPLAY###;">
+                <video playsinline="playsinline" autoplay="autoplay" loop="loop" controls>
+                    <source src="###MEIDAFILE###" type="video/mp4">
+                </video>
+            </div>
+            <div class="w-100" style="display:###IMAGEDISPLAY###;">
+                <img src="###IMAGEFILE###" alt="" class="img-fluid">
+            </div>
+            <!-- <div class="d-block d-sm-none">
+       <img src="data/bmw-01.jpg" alt="" class="img-fluid">
+    </div> -->
+        </main>
+
+        <footer class="mastfoot mt-auto fixed-bottom">
+            <div class="container-lg">
+                <div class="d-flex justify-content-center">
+                    <a style="display:###VISITUSDISPLAY###;" href="###VISITUS###" target="_blank" class="btn btn-primary btn-block my-2 mx-2"> ###VISITUSBUTTONTEXT### </a>
+                    <a style="display:###CALLUSDISPLAY###;" href="###CALLUS###" class="btn btn-primary btn-block my-2 mx-2"> ###CALLUSBUTTONTEXT###</a>
+                    <a style="display:###WHATSAPPDISPLAY###;" href="###WHATSAPP###" class="btn btn-primary btn-block my-2 mx-2"> ###WHATSAPPBUTTONTEXT###</a>
+                    <a style="display:###FACEBOOKDISPLAY###;" href="###FBPAGE###" target="_blank" class="btn btn-primary btn-block my-2 mx-2"> ###FBBUTTONTEXT### </a>
+                </div>
+                <div class="bg-dark text-center small">
+                    <p class="m-0 py-1"><strong>Powered by :</strong> My Inbox Media ®</p>
+                </div>
+         </footer>
+    </div>
+
+    <!-- Bootstrap core JavaScript-->
+    <script src="https://code.jquery.com/jquery-3.5.1.slim.min.js" integrity="sha384-DfXdz2htPH0lsSSs5nCTpuj/zy4C+OGpamoFVy38MVBnE+IbbVYUew+OrCXaRkfj" crossorigin="anonymous"></script>
+    <script src="https://cdn.jsdelivr.net/npm/popper.js@1.16.1/dist/umd/popper.min.js" integrity="sha384-9/reFTGAW83EW2RDu2S0VKaIzap3H66lZH81PoYlFhbGU+6BZp6G7niu735Sk7lN" crossorigin="anonymous"></script>
+    <script src="https://stackpath.bootstrapcdn.com/bootstrap/4.5.2/js/bootstrap.min.js" integrity="sha384-B4gt1jrGC7Jh4AgTPSdUtOBvfO8shuf57BaghqFfPlYxofvL8/KUEfYiJOMMV+rV" crossorigin="anonymous"></script>
+
+</body>
+
+</html>

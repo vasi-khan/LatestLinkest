@@ -1,0 +1,6 @@
+userid,requestdate,FileNm,campaign,sender,smscount,credit,delivered,delivered_p,failed,failed_p,AWAITED,AWAITED_p,openmsg,openmsg_p,senderId,message
+MIM2000014,14/11/2022 00:00,Linksend.csv,14Novcamp2,HONIND,3,0.46,2,66,1,33,0,0,0,0,HONIND,"Dear Customer, Your Honda car service is overdue by more than 919305334312 days. Click to register for service"
+MIM2000014,18/11/2022 00:00,test.txt,TEST5,HONIND,5,0.76,5,100,0,0,0,0,0,0,HONIND,"Dear Customer, Your Honda car service is overdue by more than @from sk days. Click to register for service"
+MIM2000014,28/11/2022 00:00,MOB.txt,TEST4,HONIND,5,0.76,5,100,0,0,0,0,0,0,HONIND,"Dear Customer, Your Honda car service is overdue by more than #var1 days. Click to register for service"
+
+

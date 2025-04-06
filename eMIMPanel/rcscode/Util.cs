@@ -1,0 +1,8514 @@
+﻿using System;
+using System.Collections.Generic;
+using System.Linq;
+using System.Text;
+using System.IO;
+using System.Security.Cryptography;
+using System.Configuration;
+using System.Data;
+using QRCodeEncoderDecoderLibrary;
+using System.Drawing;
+using System.Drawing.Imaging;
+using Shortnr.Web.Data;
+using System.Security.Policy;
+using Shortnr.Web.Business;
+using Shortnr.Web.Entities;
+using eMIMPanel.Models;
+using System.Threading.Tasks;
+using System.Web;
+using System.Web.Mvc;
+using DeviceDetectorNET;
+using DeviceDetectorNET.Parser;
+using System.Web.Hosting;
+using System.ComponentModel;
+using System.Net.Mail;
+using System.Globalization;
+using System.Web.UI.WebControls;
+using System.Text.RegularExpressions;
+using System.Data.OleDb;
+using System.Data.SqlClient;
+
+
+namespace eMIMPanel.rcscode
+{
+    public class Util
+    {
+        public string fn = System.Configuration.ConfigurationManager.AppSettings["LOGPATH"].ToString();
+        public string db = "";
+        public long smscount = 0;
+        public long noof_message = 0;
+        public double msg_rate = 0;
+
+        public Util()
+        {
+            db = Convert.ToString(ConfigurationManager.AppSettings["dbName"]);
+        }
+
+        public string Encrypt(string clearText)
+        {
+            string EncryptionKey = "MAKV2SPBNI99212";
+            byte[] clearBytes = Encoding.Unicode.GetBytes(clearText);
+            using (Aes encryptor = Aes.Create())
+            {
+                Rfc2898DeriveBytes pdb = new Rfc2898DeriveBytes(EncryptionKey, new byte[] { 0x49, 0x76, 0x61, 0x6e, 0x20, 0x4d, 0x65, 0x64, 0x76, 0x65, 0x64, 0x65, 0x76 });
+                encryptor.Key = pdb.GetBytes(32);
+                encryptor.IV = pdb.GetBytes(16);
+                using (MemoryStream ms = new MemoryStream())
+                {
+                    using (CryptoStream cs = new CryptoStream(ms, encryptor.CreateEncryptor(), CryptoStreamMode.Write))
+                    {
+                        cs.Write(clearBytes, 0, clearBytes.Length);
+                        cs.Close();
+                    }
+                    clearText = Convert.ToBase64String(ms.ToArray());
+                }
+            }
+            return clearText;
+        }
+
+        public string Decrypt(string cipherText)
+        {
+            string EncryptionKey = "MAKV2SPBNI99212";
+            cipherText = cipherText.Replace(" ", "+");
+            byte[] cipherBytes = Convert.FromBase64String(cipherText);
+            using (Aes encryptor = Aes.Create())
+            {
+                Rfc2898DeriveBytes pdb = new Rfc2898DeriveBytes(EncryptionKey, new byte[] { 0x49, 0x76, 0x61, 0x6e, 0x20, 0x4d, 0x65, 0x64, 0x76, 0x65, 0x64, 0x65, 0x76 });
+                encryptor.Key = pdb.GetBytes(32);
+                encryptor.IV = pdb.GetBytes(16);
+                using (MemoryStream ms = new MemoryStream())
+                {
+                    using (CryptoStream cs = new CryptoStream(ms, encryptor.CreateDecryptor(), CryptoStreamMode.Write))
+                    {
+                        cs.Write(cipherBytes, 0, cipherBytes.Length);
+                        cs.Close();
+                    }
+                    cipherText = Encoding.Unicode.GetString(ms.ToArray());
+                }
+            }
+            return cipherText;
+        }
+
+        public void Log(string msg)
+        {
+            try
+            {
+                FileStream filestrm = new FileStream(fn + @"LogErr_" + DateTime.Now.ToString("ddMMMyyyyHH") + ".txt", FileMode.OpenOrCreate, FileAccess.Write);
+                StreamWriter strmwriter = new StreamWriter(filestrm);
+                strmwriter.BaseStream.Seek(0, SeekOrigin.End);
+                strmwriter.WriteLine(DateTime.Now.ToString("dd-MM-yyyy HH:mm:ss:ffff") + "_" + msg);
+                strmwriter.Flush();
+                strmwriter.Close();
+            }
+            catch (Exception ex)
+            {
+
+            }
+        }
+        public bool CheckMobileEmailDuplicate(string val, string type)
+        {
+            string sql = "Select Count(*) from customer where " + (type == "E" ? " EMAIL " : " MOBILE1 ") + " = '" + val + "'";
+            int c = Convert.ToInt16(database.GetScalarValue(sql));
+            if (c > 0) return true; else return false;
+        }
+
+        public bool IsOpenTempAc(string userid)
+        {
+            int c = Convert.ToInt16(database.GetScalarValue("Select count(*) from OPENTEMPLATEACCOUNT where userid='" + userid + "'"));
+            return c == 0 ? false : true;
+        }
+
+        public DataTable ReadCSV(string path, string moblen)
+        {
+            try
+            {
+                DataTable dt = new DataTable();
+
+                StreamReader sr = new StreamReader(path);
+
+                string[] Headers = sr.ReadLine().Split(',');
+                foreach (string header in Headers)
+                {
+                    dt.Columns.Add(header);
+                }
+
+                while (!sr.EndOfStream)
+                {
+                    string[] rows = Regex.Split(sr.ReadLine(), ",(?=(?:[^\"]*\"[^\"]*\")*[^\"]*$)");
+                    DataRow dr = dt.NewRow();
+                    for (int i = 0; i < Headers.Length; i++)
+                    {
+                        dr[i] = rows[i];
+                    }
+                    dt.Rows.Add(dr);
+                }
+                sr.Dispose();
+                sr.Close();
+
+                return dt;
+            }
+            catch (Exception ex)
+            {
+                throw;
+            }
+
+        }
+
+        public DataTable ReadTextFile(string path, string moblen)
+        {
+            DataTable dt = new DataTable();
+            dt.Columns.Add("MobNo");
+
+            List<string> lines = File.ReadAllLines(path).ToList();
+            lines = lines.Select(t => Regex.Replace(t, "[^0-9]", "")).ToList();
+            lines.RemoveAll(x => x.Length < Convert.ToInt16(moblen));
+            lines = lines.Select(x => x.Substring(x.Length - Convert.ToInt16(moblen))).ToList();
+
+            lines.ForEach((item) => dt.Rows.Add(item));
+            return dt;
+        }
+
+
+        public void RemoveDuplicateRowsFromTempTable(string user1, string ext)
+        {
+            string sql = "";
+            string user = "";
+            user = ext;
+            if (ext.ToUpper().Trim() != ".TXT")
+            {
+                //string table1 = "tmp1_" + user;
+                string table1 = ext;
+                //string sqlColumn1 = string.Format("Declare @columnName varchar(500) ; Select @columnName = Coalesce(@columnName + ',', '') +'[' +Ltrim(column_name)+']'" +
+                //    " From information_schema.columns where table_name = '{0}'; select @columnName", table1);
+
+                string sqlColumn1 = string.Format("Declare @columnName varchar(500) ; Select @columnName = Coalesce(@columnName + ',', '') +'convert(nvarchar(max),[' +Ltrim(column_name)+']) as [' +Ltrim(column_name)+'] '" +
+                    " From information_schema.columns where table_name = '{0}'; select @columnName", table1);
+
+                string sqlColumn2 = string.Format("Declare @columnName varchar(500) ; Select @columnName = Coalesce(@columnName + ',', '') +'convert(nvarchar(max),[' +Ltrim(column_name)+']) '" +
+                    " From information_schema.columns where table_name = '{0}'; select @columnName", table1);
+
+                string colnm1 = Convert.ToString(database.GetScalarValue(sqlColumn1));
+                string colnm2 = Convert.ToString(database.GetScalarValue(sqlColumn2));
+
+                string datatype = Convert.ToString(database.GetScalarValue("select Data_Type From information_schema.columns where table_name = '" + table1 + @"' and ordinal_position = 1 "));
+
+                if (datatype.ToLower() == "float")
+                {
+                    var regex = new Regex(Regex.Escape("nvarchar(max)"));
+                    colnm1 = regex.Replace(colnm1, "numeric(18)", 1);
+                    colnm2 = regex.Replace(colnm2, "numeric(18)", 1);
+                }
+
+                sql = string.Format(@";WITH cte AS(
+                            SELECT {0},ROW_NUMBER() OVER (PARTITION BY {1} ORDER BY {2} ) row_num FROM {3}      
+                              ) DELETE FROM cte WHERE row_num > 1;", colnm1, colnm2, colnm2, table1); // only for excel
+
+                string table = user;
+                //string sqlColumn = string.Format("Declare @columnName varchar(500) ; Select @columnName = Coalesce(@columnName + ',', '') +'[' +Ltrim(column_name)+']' From information_schema.columns where table_name = '{0}'; select @columnName", table);
+                string sqlColumn = string.Format("Declare @columnName nvarchar(500) ; Select @columnName = Coalesce(@columnName + ',', '') +'Convert(nvarchar(max),[' +Ltrim(column_name)+']) as [' +Ltrim(column_name)+'] ' From information_schema.columns where table_name = '{0}'; select @columnName", table);
+                string sqlColumn_1 = string.Format("Declare @columnName nvarchar(500) ; Select @columnName = Coalesce(@columnName + ',', '') +'Convert(nvarchar(max),[' +Ltrim(column_name)+']) ' From information_schema.columns where table_name = '{0}'; select @columnName", table);
+                string colnm = Convert.ToString(database.GetScalarValue(sqlColumn));
+                string colnm_1 = Convert.ToString(database.GetScalarValue(sqlColumn_1));
+
+                sql += string.Format(@"WITH cte1 AS(
+                            SELECT {0},ROW_NUMBER() OVER (PARTITION BY {1} ORDER BY {2} ) row_num FROM {3}      
+                              ) DELETE FROM cte1 WHERE row_num > 1;", colnm, colnm_1, colnm_1, table);  // for txt file and excel
+
+            }
+            else
+            {
+                string table = "tmp_" + user;
+                string sqlColumn = string.Format("Declare @columnName nvarchar(500) ; Select @columnName = Coalesce(@columnName + ',', '') +'[' +Ltrim(column_name)+']' From information_schema.columns where table_name = '{0}'; select @columnName", table);
+                string colnm = Convert.ToString(database.GetScalarValue(sqlColumn));
+
+                sql = string.Format(@"WITH cte AS(
+                            SELECT {0},ROW_NUMBER() OVER (PARTITION BY {1} ORDER BY {2} ) row_num FROM tmp_{3}      
+                              ) DELETE FROM cte WHERE row_num > 1;", colnm, colnm, colnm, user);  // for txt file and excel
+
+            }
+            database.ExecuteNonQuery(sql);
+
+        }
+
+        public string SaveBlackListMobileNo(string FilePath)
+        {
+            try
+            {
+                string moblen = "10";
+                DataTable dt = ReadTextFile(FilePath, moblen);
+
+                if (dt.Rows.Count == 0)
+                    return "Mobile Numbers in the file are not Numeric. Please check the file. ";
+                else
+                {
+                    string cc = "91";
+                    int Y = dt.Rows.Count;
+                    foreach (DataRow dr in dt.Rows)
+                    {
+                        string sql = string.Format("IF NOT EXISTS (SELECT * FROM globalblacklistno WHERE mobile = '{0}') INSERT INTO globalblacklistno(mobile) VALUES('{1}') ;", dr["MobNo"], dr["MobNo"]);
+                        sql += string.Format("IF NOT EXISTS (SELECT * FROM globalblacklistno WHERE mobile = '{0}') INSERT INTO globalblacklistno(mobile) VALUES('{1}')", cc + dr["MobNo"], cc + dr["MobNo"]);
+
+                        string sql128 = string.Format("IF NOT EXISTS (SELECT * FROM blacklistno WHERE mobile = '{0}') INSERT INTO blacklistno(mobile) VALUES('{1}')", dr["MobNo"], dr["MobNo"]);
+                        string sql17 = string.Format("IF NOT EXISTS (SELECT * FROM blacklistno WHERE mobile = '{0}') INSERT INTO blacklistno(mobile) VALUES('{1}')", cc + dr["MobNo"], cc + dr["MobNo"]);
+
+                        database.ExecuteNonQueryForMultipleConnection(sql, sql128, sql17);
+                    }
+                    return "RECORDCOUNT " + Y.ToString();
+
+                }
+
+            }
+            catch (Exception ex)
+            {
+                return "Error";
+            }
+        }
+
+        public string SaveTempTable(string FilePath, string SheetName, string user, string extension, string folder, string filenm, string s = "", string moblen = "", string fileUname = "")
+        {
+            // bool chkUnq = isAllowDuplicate == true ? false : true;
+            bool chkUnq = user.ToUpper() == "MIM2101371" ? false : false;
+            string username = user;
+            if (!File.Exists(FilePath))
+            {
+                return "There was some error on file upload. Please upload again.";
+            }
+            Log("FU-user-" + user + ". File-" + FilePath);
+            string user1 = fileUname;
+            user = fileUname;
+
+            string colnm = "";
+            string datatype = "";
+            string sql = "";
+
+            string ccode = Convert.ToString(database.GetScalarValue("Select defaultCountry from customer where username='" + username + "'"));
+
+            // string moblen = (ccode == "91" ? "10" : (ccode == "971" ? "9" : "9"));
+
+            if (extension.ToLower().Contains("xls"))
+            {
+                sql = @"if exists (select * from sys.tables where name='" + user1 + @"') drop table " + user1 + @" ;
+                SELECT " + (chkUnq ? "DISTINCT" : "") + " * INTO " + user1 + @" FROM OPENROWSET('Microsoft.ACE.OLEDB.12.0', 'Excel 12.0;Database=" + FilePath + ";HDR=Yes;IMEX=1','Select * from [" + SheetName + "]') ; ";
+                try
+                {
+                    database.ExecuteNonQuery(sql);
+                }
+                catch (Exception ex1)
+                {
+                    return "Invalid file format.";
+                }
+                colnm = Convert.ToString(database.GetScalarValue("select column_name From information_schema.columns where table_name = '" + user1 + @"' and ordinal_position = 1 "));
+                datatype = Convert.ToString(database.GetScalarValue("select Data_Type From information_schema.columns where table_name = '" + user1 + @"' and ordinal_position = 1 "));
+                if (datatype.ToLower() != "float")
+                {
+                    Int64 cn1 = Convert.ToInt64(database.GetScalarValue("Select count(*) from " + user1 + @" where [" + colnm + "] like '%.%e+%' "));
+                    if (cn1 > 0) return "Error in file. Please check the file. ";
+                }
+
+                if (datatype.ToLower() != "float")
+                {
+                    //sql = @"if exists (select * from sys.tables where name='" + user + @"') drop table " + user + @" ; SELECT distinct right([" + colnm + "],10) AS [" + colnm + "] INTO " + user + @" FROM  " + user1 + " ; ";
+                    sql = @"if exists (select * from sys.tables where name='" + user + @"') drop table " + user + @" ;
+                    SELECT " + (chkUnq ? "DISTINCT" : "") + " CONVERT(nvarchar(255),LTRIM(RTRIM(str(dbo.udf_GetNumeric([" + colnm + "]),20,0)))) AS [" + colnm + "] INTO " + user + @" FROM OPENROWSET('Microsoft.ACE.OLEDB.12.0', 'Excel 12.0;Database=" + FilePath + ";HDR=Yes;IMEX=1','Select * from [" + SheetName + "]') ; ";
+                }
+                else
+                {
+                    sql = @"if exists (select * from sys.tables where name='" + user + @"') drop table " + user + @" ;
+                    SELECT " + (chkUnq ? "DISTINCT" : "") + " CONVERT(nvarchar(255),LTRIM(RTRIM(str(isnull([" + colnm + "],0),20,0)))) AS [" + colnm + "] INTO " + user + @" FROM OPENROWSET('Microsoft.ACE.OLEDB.12.0', 'Excel 12.0;Database=" + FilePath + ";HDR=Yes;IMEX=1','Select * from [" + SheetName + "]') ; ";
+                }
+
+                try
+                {
+                    database.ExecuteNonQuery(sql);
+                }
+                catch (Exception ex2)
+                {
+                    return "Mobile Numbers in the file are not Numeric. Please check the file. ";
+                }
+
+            }
+            else if (extension.ToLower().Contains("txt"))
+            {
+                #region< Commented on 26-02-2021 >
+                //sql = @"if exists (select * from sys.tables where name = '" + user1 + @"') drop table " + user1 + @"; 
+                //select distinct * into " + user1 + " FROM OPENROWSET('Microsoft.ACE.OLEDB.12.0','Text;Database=" + folder + ";HDR=No','SELECT * FROM " + filenm + "') ";
+                //try
+                //{
+                //    database.ExecuteNonQuery(sql);
+                //}
+                //catch (Exception ex1)
+                //{
+                //    return "Invalid file format.";
+                //}
+                //colnm = Convert.ToString(database.GetScalarValue("select column_name From information_schema.columns where table_name = '" + user1 + @"' and ordinal_position = 1 "));
+                //datatype = Convert.ToString(database.GetScalarValue("select Data_Type From information_schema.columns where table_name = '" + user1 + @"' and ordinal_position = 1 "));
+
+                //if (datatype.ToLower() != "float")
+                //{
+                //    Int64 cn1 = Convert.ToInt64(database.GetScalarValue("Select count(*) from " + user1 + @" where [" + colnm + "] like '%.%e+%' or  [" + colnm + "] like '%.%E+%'"));
+                //    if (cn1 > 0) return "Error in file. Please check the file. ";
+                //}
+
+                //if (datatype.ToLower() != "float")
+                //{
+                //    sql = @"if exists (select * from sys.tables where name='" + user + @"') drop table " + user + @" ;
+                //    SELECT distinct CONVERT(nvarchar(255),LTRIM(RTRIM(str(dbo.udf_GetNumeric([" + colnm + "]),20,0)))) AS [" + colnm + "] INTO " + user + @" FROM OPENROWSET('Microsoft.ACE.OLEDB.12.0','Text;Database=" + folder + ";HDR=NO','SELECT * FROM " + filenm + "') ";
+                //}
+                //else
+                //{
+                //    sql = @"if exists (select * from sys.tables where name='" + user + @"') drop table " + user + @" ;
+                //    SELECT distinct CONVERT(nvarchar(255),LTRIM(RTRIM(str(ISNULL([" + colnm + "],0),20,0)))) AS [" + colnm + "] INTO " + user + @" FROM OPENROWSET('Microsoft.ACE.OLEDB.12.0','Text;Database=" + folder + ";HDR=NO','SELECT * FROM " + filenm + "') ";
+                //}
+                //try
+                //{
+                //    database.ExecuteNonQuery(sql);
+                //}
+                //catch (Exception ex2)
+                //{
+                //    return "Mobile Numbers in the file are not Numeric. Please check the file. ";
+                //}
+                #endregion
+                try
+                {
+                    DataTable dt = ReadTextFile(FilePath, moblen);
+
+                    if (dt.Rows.Count == 0)
+                        return "Mobile Numbers in the file are not Numeric. Please check the file. ";
+                    else
+                    {
+                        sql = string.Format("if exists (select * from sys.tables where name = '{0}') drop table {1}", user, user);
+                        sql += string.Format(" Create table {0} (MobNo varchar(15) )", user);
+
+                        database.ExecuteNonQuery(sql);
+                        database.BulkInsertData(dt, user); colnm = "MobNo";
+
+                        //if (isAllowDuplicate == true)
+                        //{
+                        //    database.BulkInsertData(dt, user); colnm = "MobNo";
+                        //}
+                        //else
+                        //{
+                        //    database.BulkInsertData(dt.DefaultView.ToTable(true, "MobNo"), user); colnm = "MobNo";
+                        //}
+                    }
+
+                }
+                catch (Exception ex)
+                {
+
+                }
+            }
+            //rabi 29/07/21
+            else if (extension.ToLower().Contains("csv"))
+            {
+                try
+                {
+                    StringBuilder sb = new StringBuilder();
+                    StringBuilder sb1 = new StringBuilder();
+
+                    DataTable dt = ReadCSV(FilePath, moblen);
+                    if (dt.Rows.Count == 0)
+                        return "Mobile Numbers in the file are not Numeric. Please check the file. ";
+                    else
+                    {
+                        sql = @"if exists (select * from sys.tables where name='" + user + @"') drop table " + user + "";
+                        string sql1 = @"if exists (select * from sys.tables where name='" + user1 + @"') drop table " + user1 + "";
+
+                        sb.Append(@"Create table " + user + "  (");
+                        sb1.Append(@"Create table " + user1 + "  (");
+                        for (int i = 0; i < dt.Columns.Count; i++)
+                        {
+                            if (i != dt.Columns.Count - 1)
+                            {
+                                sb.Append("[" + dt.Columns[i] + "] nvarchar (max),");
+                                sb1.Append("[" + dt.Columns[i] + "] nvarchar (max),");
+                            }
+                            else
+                            {
+                                sb.Append("[" + dt.Columns[i] + "] nvarchar(max) ");
+                                sb1.Append("[" + dt.Columns[i] + "] nvarchar(max) ");
+                            }
+                        }
+                        sb.Append(")");
+                        sb1.Append(")");
+                        string str = sql + "  " + sb.ToString();
+                        database.ExecuteNonQuery(sql + "  " + sb.ToString());
+                        //database.BulkInsertDataDynamic(dt, user1);
+                        database.BulkInsertDataDynamic(dt, user);
+                        colnm = Convert.ToString(database.GetScalarValue("select column_name From information_schema.columns where table_name = '" + user + @"' and ordinal_position = 1 "));
+
+                    }
+                }
+                catch (Exception ex)
+                {
+
+                }
+            }
+
+
+            database.ExecuteNonQuery("delete from " + user + @"   where len([" + colnm + "]) < " + moblen);
+            database.ExecuteNonQuery("update " + user + @" set [" + colnm + "] = right([" + colnm + "], " + moblen + ") where len([" + colnm + "]) > " + moblen);
+
+            database.ExecuteNonQuery("delete d from " + user + @" d inner join globalBlackListNo b on b.mobile=d.[" + colnm + "] ");
+            /* rabi 15 july 21*/
+            /* Kuldeep 08 Mar 22*/
+            //database.ExecuteNonQuery("if exists(select * from smsrestrictmobile srm join [smsrestriction] sr on srm.smsrestrictionid=sr.id where userid='" + username + "' AND TYPE='U') delete d from " + user + @" d inner join SMSRestrictmobile SRM on SRM.MobileNo='91'+d.[" + colnm + "]  join [SMSRestriction] SR on SRM.SMSRestrictioniD=SR.Id  WHERE UserId='" + username + "' AND TYPE='U' if exists(select * from smsrestrictmobile srm join [smsrestriction] sr on srm.smsrestrictionid=sr.id where SenderId='" + s + "' AND TYPE='S') delete d from " + user + @" d inner join SMSRestrictmobile SRM on SRM.MobileNo='91'+d.[" + colnm + "]  join [SMSRestriction] SR on SRM.SMSRestrictioniD=SR.Id  WHERE SenderId='" + s + "' AND TYPE='S'");
+
+            //check column name is numeric or not
+            sql = "select ISNUMERIC(column_name) From information_schema.columns where table_name = '" + user + "' and ordinal_position = 1";
+            Int32 x = Convert.ToInt16(database.GetScalarValue(sql));
+            if (x == 1) return "Column name is numeric. Cannot upload file.";
+
+            try
+            {
+                sql = "select convert(numeric,[" + colnm + "]) from " + user;
+                DataTable dt = database.GetDataTable(sql);
+            }
+            catch (Exception ex)
+            {
+                return "Mobile Numbers in the file are not Numeric. Please check the file. ";
+            }
+
+            // CHECK FOR ALL NULL VALUES
+            sql = "select count(*) from " + user + " where [" + colnm + "] is not null ";
+            Int32 Y = Convert.ToInt32(database.GetScalarValue(sql));
+            if (Y <= 0) return "No Mobile Numbers found in the file";
+            return "RECORDCOUNT " + Y.ToString();
+        }
+
+
+        public string SaveTempTable3(string FilePath, string SheetName, string user, string extension, string folder, string filenm, string mobLen = "")
+        {
+            string username = user;
+            if (!File.Exists(FilePath))
+            {
+                return "There was some error on file upload. Please upload again.";
+            }
+            Log("FUxclud-user-" + user + ". File-" + FilePath);
+            string maintable = "tmp_" + user;
+            string maintable1 = "tmp1_" + user;
+            string user1 = "tmp1Ex_" + user;
+            user = "tmpEx_" + user;
+
+            string colnm = "";
+            string datatype = "";
+            string sql = "";
+
+            string ccode = Convert.ToString(database.GetScalarValue("Select defaultCountry from customer where username='" + username + "'"));
+            string moblen = (ccode == "91" ? "10" : "9");
+
+            if (extension.ToLower().Contains("xls"))
+            {
+                sql = @"if exists (select * from sys.tables where name='" + user1 + @"') drop table " + user1 + @" ;
+                SELECT distinct * INTO " + user1 + @" FROM OPENROWSET('Microsoft.ACE.OLEDB.12.0', 'Excel 12.0;Database=" + FilePath + ";HDR=Yes;IMEX=1','Select * from [" + SheetName + "]') ; ";
+                try
+                {
+                    database.ExecuteNonQuery(sql);
+                }
+                catch (Exception ex1)
+                {
+                    return "Invalid file format.";
+                }
+                colnm = Convert.ToString(database.GetScalarValue("select column_name From information_schema.columns where table_name = '" + user1 + @"' and ordinal_position = 1 "));
+                datatype = Convert.ToString(database.GetScalarValue("select Data_Type From information_schema.columns where table_name = '" + user1 + @"' and ordinal_position = 1 "));
+                if (datatype.ToLower() != "float")
+                {
+                    Int64 cn1 = Convert.ToInt64(database.GetScalarValue("Select count(*) from " + user1 + @" where [" + colnm + "] like '%.%e+%' "));
+                    if (cn1 > 0) return "Error in file. Please check the file. ";
+                }
+
+                if (datatype.ToLower() != "float")
+                {
+                    sql = @"if exists (select * from sys.tables where name='" + user + @"') drop table " + user + @" ;
+                    SELECT distinct CONVERT(nvarchar(255),LTRIM(RTRIM(str(dbo.udf_GetNumeric([" + colnm + "]),20,0)))) AS [" + colnm + "] INTO " + user + @" FROM OPENROWSET('Microsoft.ACE.OLEDB.12.0', 'Excel 12.0;Database=" + FilePath + ";HDR=Yes;IMEX=1','Select * from [" + SheetName + "]') ; ";
+                }
+                else
+                {
+                    sql = @"if exists (select * from sys.tables where name='" + user + @"') drop table " + user + @" ;
+                    SELECT distinct CONVERT(nvarchar(255),LTRIM(RTRIM(str(isnull([" + colnm + "],0),20,0)))) AS [" + colnm + "] INTO " + user + @" FROM OPENROWSET('Microsoft.ACE.OLEDB.12.0', 'Excel 12.0;Database=" + FilePath + ";HDR=Yes;IMEX=1','Select * from [" + SheetName + "]') ; ";
+                }
+
+                try
+                {
+                    database.ExecuteNonQuery(sql);
+                }
+                catch (Exception ex2)
+                {
+                    return "Mobile Numbers in the file are not Numeric. Please check the file. ";
+                }
+
+            }
+            else if (extension.ToLower().Contains("txt"))
+            {
+                #region< Commented on 26-02-2021 >
+
+                //sql = @"if exists (select * from sys.tables where name = '" + user1 + @"') drop table " + user1 + @"; 
+                //select distinct * into " + user1 + " FROM OPENROWSET('Microsoft.ACE.OLEDB.12.0','Text;Database=" + folder + ";HDR=No','SELECT * FROM " + filenm + "') ";
+                //try
+                //{
+                //    database.ExecuteNonQuery(sql);
+                //}
+                //catch (Exception ex1)
+                //{
+                //    return "Invalid file format.";
+                //}
+                //colnm = Convert.ToString(database.GetScalarValue("select column_name From information_schema.columns where table_name = '" + user1 + @"' and ordinal_position = 1 "));
+                //datatype = Convert.ToString(database.GetScalarValue("select Data_Type From information_schema.columns where table_name = '" + user1 + @"' and ordinal_position = 1 "));
+
+                //if (datatype.ToLower() != "float")
+                //{
+                //    Int64 cn1 = Convert.ToInt64(database.GetScalarValue("Select count(*) from " + user1 + @" where [" + colnm + "] like '%.%e+%' or  [" + colnm + "] like '%.%E+%'"));
+                //    if (cn1 > 0) return "Error in file. Please check the file. ";
+                //}
+
+                //if (datatype.ToLower() != "float")
+                //{
+                //    sql = @"if exists (select * from sys.tables where name='" + user + @"') drop table " + user + @" ;
+                //    SELECT distinct CONVERT(nvarchar(255),LTRIM(RTRIM(str(dbo.udf_GetNumeric([" + colnm + "]),20,0)))) AS [" + colnm + "] INTO " + user + @" FROM OPENROWSET('Microsoft.ACE.OLEDB.12.0','Text;Database=" + folder + ";HDR=NO','SELECT * FROM " + filenm + "') ";
+                //}
+                //else
+                //{
+                //    sql = @"if exists (select * from sys.tables where name='" + user + @"') drop table " + user + @" ;
+                //    SELECT distinct CONVERT(nvarchar(255),LTRIM(RTRIM(str(ISNULL([" + colnm + "],0),20,0)))) AS [" + colnm + "] INTO " + user + @" FROM OPENROWSET('Microsoft.ACE.OLEDB.12.0','Text;Database=" + folder + ";HDR=NO','SELECT * FROM " + filenm + "') ";
+                //}
+                //try
+                //{
+                //    database.ExecuteNonQuery(sql);
+                //}
+                //catch (Exception ex2)
+                //{
+                //    return "Mobile Numbers in the file are not Numeric. Please check the file. ";
+                //}
+
+                #endregion
+
+                try
+                {
+                    DataTable dt = ReadTextFile(FilePath, moblen);
+                    if (dt.Rows.Count == 0)
+                        return "Mobile Numbers in the file are not Numeric. Please check the file. ";
+                    else
+                    {
+                        sql = string.Format("if exists (select * from sys.tables where name = '{0}') drop table {1}", user, user);
+                        sql += string.Format(" Create table {0} (MobNo varchar(15) )", user);
+
+                        database.ExecuteNonQuery(sql);
+
+                        database.BulkInsertData(dt, user); colnm = "MobNo";
+                    }
+
+                }
+                catch (Exception ex)
+                {
+
+                }
+            }
+            else if (extension.ToLower().Contains("csv"))
+            {
+                try
+                {
+                    StringBuilder sb = new StringBuilder();
+                    StringBuilder sb1 = new StringBuilder();
+
+                    DataTable dt = ReadCSV(FilePath, moblen);
+                    if (dt.Rows.Count == 0)
+                        return "Mobile Numbers in the file are not Numeric. Please check the file. ";
+                    else
+                    {
+                        sql = @"if exists (select * from sys.tables where name='" + user + @"') drop table " + user + "";
+                        string sql1 = @"if exists (select * from sys.tables where name='" + user1 + @"') drop table " + user1 + "";
+
+                        sb.Append(@"Create table " + user + "  (");
+                        sb1.Append(@"Create table " + user1 + "  (");
+                        for (int i = 0; i < dt.Columns.Count; i++)
+                        {
+                            if (i != dt.Columns.Count - 1)
+                            {
+                                sb.Append("[" + dt.Columns[i] + "] nvarchar (max),");
+                                sb1.Append("[" + dt.Columns[i] + "] nvarchar (max),");
+
+                            }
+                            else
+                            {
+                                sb.Append("[" + dt.Columns[i] + "] nvarchar(max) ");
+                                sb1.Append("[" + dt.Columns[i] + "] nvarchar(max) ");
+
+                            }
+                        }
+                        sb.Append(")");
+                        sb1.Append(")");
+
+                        database.ExecuteNonQuery(sql + "  " + sb.ToString() + " " + sql1 + " " + sb1.ToString());
+                        database.BulkInsertDataDynamic(dt, user1);
+                        database.BulkInsertDataDynamic(dt, user);
+                        colnm = Convert.ToString(database.GetScalarValue("select column_name From information_schema.columns where table_name = '" + user1 + @"' and ordinal_position = 1 "));
+
+                    }
+
+                }
+                catch (Exception ex)
+                {
+
+                }
+
+            }
+
+            database.ExecuteNonQuery("delete from " + user + @"   where len([" + colnm + "]) < " + moblen);
+            database.ExecuteNonQuery("update " + user + @" set [" + colnm + "] = right([" + colnm + "], " + moblen + ") where len([" + colnm + "]) > " + moblen);
+
+            //check column name is numeric or not
+            sql = "select ISNUMERIC(column_name) From information_schema.columns where table_name = '" + user + "' and ordinal_position = 1";
+            Int32 x = Convert.ToInt16(database.GetScalarValue(sql));
+            if (x == 1) return "Column name is numeric. Cannot upload file.";
+
+            try
+            {
+                sql = "select convert(numeric,[" + colnm + "]) from " + user;
+                DataTable dt = database.GetDataTable(sql);
+            }
+            catch (Exception ex)
+            {
+                return "Mobile Numbers in the file are not Numeric. Please check the file. ";
+            }
+
+            // CHECK FOR ALL NULL VALUES
+            sql = "select count(*) from " + user + " where [" + colnm + "] is not null ";
+            Int32 Y = Convert.ToInt32(database.GetScalarValue(sql));
+            if (Y <= 0) return "No Mobile Numbers found in the file";
+
+            // find matching of maintable and user table
+            string colnmMainTable = Convert.ToString(database.GetScalarValue("select column_name From information_schema.columns where table_name = '" + maintable + @"' and ordinal_position = 1 "));
+            Int32 matchingcnt = Convert.ToInt32(database.GetScalarValue("Select Count(*) from " + maintable + " m inner join " + user + " u on m.[" + colnmMainTable + "]=u.[" + colnm + "] "));
+
+            database.ExecuteNonQuery("Delete from " + maintable + " where [" + colnmMainTable + "] in (select [" + colnm + "] from " + user + " )");
+
+            database.ExecuteNonQuery("if exists (select * from sys.tables where name='" + maintable1 + @"') Delete from " + maintable1 + " where [" + colnmMainTable + "] in (select [" + colnm + "] from " + user + " )");
+
+            Int32 Z = Convert.ToInt32(database.GetScalarValue("select count(*) from " + maintable + " where [" + colnmMainTable + "] is not null "));
+            return "RECORDCOUNT," + Y.ToString() + "," + matchingcnt.ToString() + "," + Z;
+        }
+
+
+        public string SaveTempTable_old(string FilePath, string SheetName, string user, string extension, string folder, string filenm)
+        {
+            if (!File.Exists(FilePath))
+            {
+                return "There was some error on file upload. Please upload again.";
+            }
+            Log("FU-user-" + user + ". File-" + FilePath);
+            string user1 = "tmp1_" + user;
+            user = "tmp_" + user;
+            string colnm = "";
+            string sql = "";
+
+            if (extension.ToLower().Contains("xls"))
+            {
+                sql = @"if exists (select * from sys.tables where name='" + user1 + @"') drop table " + user1 + @" ;
+                SELECT distinct * INTO " + user1 + @" FROM OPENROWSET('Microsoft.ACE.OLEDB.12.0', 'Excel 12.0;Database=" + FilePath + ";HDR=Yes;IMEX=1','Select * from [" + SheetName + "]') ; ";
+                try
+                {
+                    database.ExecuteNonQuery(sql);
+                }
+                catch (Exception ex1)
+                {
+                    return "Invalid file format.";
+                }
+                colnm = Convert.ToString(database.GetScalarValue("select column_name From information_schema.columns where table_name = '" + user1 + @"' and ordinal_position = 1 "));
+
+                sql = @"if exists (select * from sys.tables where name='" + user + @"') drop table " + user + @" ;
+                SELECT distinct CONVERT(nvarchar(255),LTRIM(RTRIM(str(ISNULL([" + colnm + "],0),20,0)))) AS [" + colnm + "] INTO " + user + @" FROM OPENROWSET('Microsoft.ACE.OLEDB.12.0', 'Excel 12.0;Database=" + FilePath + ";HDR=Yes;IMEX=1','Select * from [" + SheetName + "]') ; ";
+                try
+                {
+                    database.ExecuteNonQuery(sql);
+                }
+                catch (Exception ex2)
+                {
+                    return "Mobile Numbers in the file are not Numeric. Please check the file. ";
+                }
+            }
+            else if (extension.ToLower().Contains("txt"))
+            {
+                sql = @"if exists (select * from sys.tables where name = '" + user1 + @"') drop table " + user1 + @"; 
+                select distinct * into " + user1 + " FROM OPENROWSET('Microsoft.ACE.OLEDB.12.0','Text;Database=" + folder + ";HDR=NO','SELECT * FROM " + filenm + "') ";
+                try
+                {
+                    database.ExecuteNonQuery(sql);
+                }
+                catch (Exception ex1)
+                {
+                    return "Invalid file format.";
+                }
+                colnm = Convert.ToString(database.GetScalarValue("select column_name From information_schema.columns where table_name = '" + user1 + @"' and ordinal_position = 1 "));
+
+                sql = @"if exists (select * from sys.tables where name='" + user + @"') drop table " + user + @" ;
+                SELECT distinct CONVERT(nvarchar(255),LTRIM(RTRIM(str(ISNULL([" + colnm + "],0),20,0)))) AS [" + colnm + "] INTO " + user + @" FROM OPENROWSET('Microsoft.ACE.OLEDB.12.0','Text;Database=" + folder + ";HDR=NO','SELECT * FROM " + filenm + "') ";
+
+                try
+                {
+                    database.ExecuteNonQuery(sql);
+                }
+                catch (Exception ex2)
+                {
+                    return "Mobile Numbers in the file are not Numeric. Please check the file. ";
+                }
+            }
+
+            database.ExecuteNonQuery("update " + user + " set [" + colnm + "]=null where [" + colnm + "]='0'");
+            //string colnm = Convert.ToString(database.GetScalarValue("select column_name From information_schema.columns where table_name = '" + user + @"' and ordinal_position = 1 "));
+
+            //check column name is numeric or not
+            sql = "select ISNUMERIC(column_name) From information_schema.columns where table_name = '" + user + "' and ordinal_position = 1";
+            Int32 x = Convert.ToInt16(database.GetScalarValue(sql));
+            if (x == 1) return "Column name is numeric. Cannot upload file.";
+
+            //update xls and set all space, dash to ""
+            database.ExecuteNonQuery("update " + user + " set [" + colnm + "]= replace(replace([" + colnm + "],' ',''),'-','') ");
+            //check all values are numeric 
+            try
+            {
+                sql = "select convert(numeric,[" + colnm + "]) from " + user;
+                DataTable dt = database.GetDataTable(sql);
+            }
+            catch (Exception ex)
+            {
+                return "Mobile Numbers in the file are not Numeric. Please check the file. ";
+            }
+
+            // CHECK FOR ALL NULL VALUES
+            sql = "select count(*) from " + user + " where [" + colnm + "] is not null ";
+            Int32 Y = Convert.ToInt32(database.GetScalarValue(sql));
+            if (Y <= 0) return "No Mobile Numbers found in the file";
+
+            //check minimum length of the column
+            sql = "select isnull(min(len([" + colnm + "])),0) from " + user;
+            x = Convert.ToInt16(database.GetScalarValue(sql));
+            if (x < 10) return "Mobile Number of less than 10 digit length found in the file. Please rectify the same and upload the file again.";
+            if (x > 12) return "Mobile Numbers of more than 12 digit length found in the file. Please rectify the same and upload the file again. ";
+
+            //check maximum length of the column
+            sql = "select isnull(max(len([" + colnm + "])),0) from " + user;
+            x = Convert.ToInt16(database.GetScalarValue(sql));
+            if (x > 12) return "Mobile Numbers of more than 12 digit length found in the file. Please rectify the same and upload the file again. ";
+
+            //check 11 digit mobile nos
+            sql = "select count(*) from " + user + " where len([" + colnm + "]) = 11 ";
+            x = Convert.ToInt16(database.GetScalarValue(sql));
+            if (x > 0) return "Mobile Numbers of 11 digit length found in the file. Please rectify the same and upload the file again. ";
+
+            return "RECORDCOUNT " + Y.ToString();
+        }
+
+
+        public string SaveTempTable2_NOTINUSE(string FilePath, string SheetName, string user, string extension, string folder, string filenm)
+        {
+            string sUserid = user;
+            string user1 = "tmp1_" + user;
+            user = "tmp_" + user;
+            string colnm = "";
+            string sql = "";
+
+            if (extension.ToLower().Contains("xls"))
+            {
+                try
+                {
+                    sql = @"if exists (select * from sys.tables where name='" + user1 + @"') drop table " + user1 + @" ; ";
+                    database.ExecuteNonQuery(sql);
+                    sql = @"if exists(select * from sys.servers where name = N'" + sUserid + @"') begin EXEC sp_dropserver @server = N'" + sUserid + @"', @droplogins='droplogins' end ; ";
+                    database.ExecuteNonQuery(sql);
+                    sql = @"EXEC sp_addlinkedserver 
+                @server = N'" + sUserid + @"',
+                @srvproduct = N'Excel',
+                @provider = N'Microsoft.ACE.OLEDB.12.0',
+                @datasrc = N'" + FilePath + @"',
+                @provstr = N'Excel 12.0'; ";
+                    database.ExecuteNonQuery(sql);
+
+                    //sql = @"EXEC sp_addlinkedsrvlogin '" + sUserid + @"', 'FALSE', 'emimpaneluser', 'WSRV33252-IND\inbox_usr', 'Nh2#42#%^*?RTf';";
+                    //database.ExecuteNonQuery(sql);
+                    sql = sql + @"SELECT distinct * into " + user1 + @" FROM OPENQUERY(" + sUserid + @", 'SELECT * FROM [" + SheetName + "]') ";
+
+                    //SELECT distinct * INTO " + user1 + @" FROM OPENROWSET('Microsoft.ACE.OLEDB.12.0', 'Excel 12.0;Database=" + FilePath + ";HDR=Yes;IMEX=1','Select * from [" + SheetName + "]') ; ";
+
+                    database.ExecuteNonQuery(sql);
+                }
+                catch (Exception ex1)
+                {
+                    Log("er - " + ex1.Message + " - " + sql);
+                    return "Invalid file format.";
+                }
+                colnm = Convert.ToString(database.GetScalarValue("select column_name From information_schema.columns where table_name = '" + user1 + @"' and ordinal_position = 1 "));
+
+                //sql = @"if exists (select * from sys.tables where name='" + user + @"') drop table " + user + @" ;
+                //SELECT distinct CONVERT(nvarchar(255),LTRIM(RTRIM(str(ISNULL([" + colnm + "],0),20,0)))) AS [" + colnm + "] INTO " + user + @" FROM OPENROWSET('Microsoft.ACE.OLEDB.12.0', 'Excel 12.0;Database=" + FilePath + ";HDR=Yes;IMEX=1','Select * from [" + SheetName + "]') ; ";
+
+                sql = @"if exists (select * from sys.tables where name='" + user + @"') drop table " + user + @" ;
+                SELECT distinct CONVERT(nvarchar(255),LTRIM(RTRIM(str(ISNULL([" + colnm + "],0),20,0)))) AS [" + colnm + "] INTO " + user + @" FROM OPENQUERY(" + sUserid + @", 'SELECT * FROM [" + SheetName + "]') ";
+
+                try
+                {
+                    database.ExecuteNonQuery(sql);
+                }
+                catch (Exception ex2)
+                {
+                    return "Mobile Numbers in the file are not Numeric. Please check the file. ";
+                }
+            }
+            else if (extension.ToLower().Contains("txt"))
+            {
+                sql = @"if exists (select * from sys.tables where name = '" + user1 + @"') drop table " + user1 + @"; 
+                select distinct * into " + user1 + " FROM OPENROWSET('Microsoft.ACE.OLEDB.12.0','Text;Database=" + folder + ";HDR=NO','SELECT * FROM " + filenm + "') ";
+                database.ExecuteNonQuery(sql);
+                colnm = Convert.ToString(database.GetScalarValue("select column_name From information_schema.columns where table_name = '" + user1 + @"' and ordinal_position = 1 "));
+
+                sql = @"if exists (select * from sys.tables where name='" + user + @"') drop table " + user + @" ;
+                SELECT distinct CONVERT(nvarchar(255),LTRIM(RTRIM(str(ISNULL([" + colnm + "],0),20,0)))) AS [" + colnm + "] INTO " + user + @" FROM OPENROWSET('Microsoft.ACE.OLEDB.12.0','Text;Database=" + folder + ";HDR=NO','SELECT * FROM " + filenm + "') ";
+
+                try
+                {
+                    database.ExecuteNonQuery(sql);
+                }
+                catch (Exception ex2)
+                {
+                    return "Mobile Numbers in the file are not Numeric. Please check the file. ";
+                }
+            }
+
+            database.ExecuteNonQuery("update " + user + " set [" + colnm + "]=null where [" + colnm + "]='0'");
+            //string colnm = Convert.ToString(database.GetScalarValue("select column_name From information_schema.columns where table_name = '" + user + @"' and ordinal_position = 1 "));
+
+            //check column name is numeric or not
+            sql = "select ISNUMERIC(column_name) From information_schema.columns where table_name = '" + user + "' and ordinal_position = 1";
+            Int32 x = Convert.ToInt16(database.GetScalarValue(sql));
+            if (x == 1) return "Column name is numeric. Cannot upload file.";
+
+            //update xls and set all space, dash to ""
+            database.ExecuteNonQuery("update " + user + " set [" + colnm + "]= replace(replace([" + colnm + "],' ',''),'-','') ");
+            //check all values are numeric 
+            try
+            {
+                sql = "select convert(numeric,[" + colnm + "]) from " + user;
+                DataTable dt = database.GetDataTable(sql);
+            }
+            catch (Exception ex)
+            {
+                return "Mobile Numbers in the file are not Numeric. Please check the file. ";
+            }
+
+            // CHECK FOR ALL NULL VALUES
+            sql = "select count(*) from " + user + " where [" + colnm + "] is not null ";
+            Int32 Y = Convert.ToInt32(database.GetScalarValue(sql));
+            if (Y <= 0) return "No Mobile Numbers found in the file";
+
+            //check minimum length of the column
+            sql = "select isnull(min(len([" + colnm + "])),0) from " + user;
+            x = Convert.ToInt16(database.GetScalarValue(sql));
+            if (x < 10) return "Mobile Number of less than 10 digit length found in the file. Please rectify the same and upload the file again.";
+            if (x > 12) return "Mobile Numbers of more than 12 digit length found in the file. Please rectify the same and upload the file again. ";
+
+            //check maximum length of the column
+            sql = "select isnull(max(len([" + colnm + "])),0) from " + user;
+            x = Convert.ToInt16(database.GetScalarValue(sql));
+            if (x > 12) return "Mobile Numbers of more than 12 digit length found in the file. Please rectify the same and upload the file again. ";
+
+            //check 11 digit mobile nos
+            sql = "select count(*) from " + user + " where len([" + colnm + "]) = 11 ";
+            x = Convert.ToInt16(database.GetScalarValue(sql));
+            if (x > 0) return "Mobile Numbers of 11 digit length found in the file. Please rectify the same and upload the file again. ";
+
+            return "RECORDCOUNT " + Y.ToString();
+        }
+
+        public string SaveTempTable4Group(string user, string grp)
+        {
+            string user1 = "tmp_" + user;
+            string sql = "";
+
+            sql = @"if exists (select * from sys.tables where name='" + user + @"') drop table " + user + @" ;
+                select CONVERT(nvarchar(255),LTRIM(RTRIM(str(ISNULL(d.mob,0),20,0)))) AS mobile INTO " + user1 + @" from grouphead h inner join groupdtl d on h.id=d.id where h.userid= '" + user + "' and h.grpname='" + grp + "'";
+            try
+            {
+                database.ExecuteNonQuery(sql);
+            }
+            catch (Exception ex2)
+            {
+                return "Mobile Numbers in the Group are not Numeric. Please check the file. ";
+            }
+
+
+            // CHECK FOR ALL NULL VALUES
+            sql = "select count(*) from " + user1 + " where mobile is not null ";
+            Int32 Y = Convert.ToInt32(database.GetScalarValue(sql));
+            if (Y <= 0) return "No Mobile Numbers found in the GROUP";
+
+            return "RECORDCOUNT " + Y.ToString();
+        }
+
+        //
+        public DataTable GetSMSrecordsFromUSERTMP(string user)
+        {
+            user = "tmp_" + user;
+            string sql = "if exists (select * from sys.tables where name='" + user + @"') Select * from " + user + @" else select '' ";
+            DataTable dt = new DataTable("dt");
+            dt = database.GetDataTable(sql);
+            return dt;
+        }
+
+        public byte[] convertStringtoByteArray(string s)
+        {
+            QRCodeEncoderDecoderLibrary.QREncoder QRCodeEncoder = new QRCodeEncoderDecoderLibrary.QREncoder();
+            QRCodeEncoderDecoderLibrary.ErrorCorrection ErrorCorrection = (QRCodeEncoderDecoderLibrary.ErrorCorrection)0;
+            Bitmap QRCodeImage;
+            // encode data
+            QRCodeEncoder.Encode(ErrorCorrection, s);
+
+            // create bitmap
+            QRCodeImage = QRCodeEncoderDecoderLibrary.QRCodeToBitmap.CreateBitmap(QRCodeEncoder, 4, 8);
+            byte[] byteArray;
+            using (MemoryStream stream2 = new MemoryStream())
+            {
+                Bitmap resized = new Bitmap(QRCodeImage, new Size(QRCodeImage.Width * 3, QRCodeImage.Height * 3));
+                resized.Save(stream2, System.Drawing.Imaging.ImageFormat.Png);
+                byteArray = stream2.ToArray();
+            }
+
+            return byteArray;
+        }
+        public Bitmap convertStringtoBitMap(string s, int size)
+        {
+            QRCodeEncoderDecoderLibrary.QREncoder QRCodeEncoder = new QRCodeEncoderDecoderLibrary.QREncoder();
+            QRCodeEncoderDecoderLibrary.ErrorCorrection ErrorCorrection = (QRCodeEncoderDecoderLibrary.ErrorCorrection)0;
+
+            Bitmap QRCodeImage;
+            // encode data
+            QRCodeEncoder.Encode(ErrorCorrection, s);
+
+            // create bitmap
+            QRCodeImage = QRCodeEncoderDecoderLibrary.QRCodeToBitmap.CreateBitmap(QRCodeEncoder, 4, 8);
+            //byte[] byteArray;
+            using (MemoryStream stream2 = new MemoryStream())
+            {
+                Bitmap resized = new Bitmap(QRCodeImage, new Size(QRCodeImage.Width * size, QRCodeImage.Height * size));
+                resized.Save(stream2, System.Drawing.Imaging.ImageFormat.Png);
+                return resized;
+                //byteArray = stream2.ToArray();
+            }
+
+            //return byteArray;
+        }
+        public Bitmap ChangeColor(Bitmap image, Color fromColor, Color toColor)
+        {
+            ImageAttributes attributes = new ImageAttributes();
+            attributes.SetRemapTable(new ColorMap[]
+            {
+            new ColorMap()
+            {
+                OldColor = fromColor,
+                NewColor = toColor,
+            }
+            }, ColorAdjustType.Bitmap);
+
+            using (Graphics g = Graphics.FromImage(image))
+            {
+                g.DrawImage(
+                    image,
+                    new Rectangle(Point.Empty, image.Size),
+                    0, 0, image.Width, image.Height,
+                    GraphicsUnit.Pixel,
+                    attributes);
+            }
+
+            return image;
+        }
+
+        public DataTable GetURLS4Report(string id, string url)
+        {
+            string sql = "SELECT long_url as LongURL,concat('" + url + "/', segment) as SmallURL FROM short_urls s where id='" + id + "'";
+            DataTable dt = new DataTable("dt");
+            dt = database.GetDataTable(sql);
+            return dt;
+        }
+
+        public string AddStats(string seg, string referer, string UserHostAddress, string browser, string platform, string ismobile, string manuf, string model)
+        {
+            string sql = "select id,long_url from short_urls where segment='" + seg + "'";
+            DataTable dt = new DataTable("dt");
+            dt = database.GetDataTable(sql);
+            if (dt.Rows.Count <= 0) return "Page_Not_Found_";
+            string id = Convert.ToString(dt.Rows[0]["id"]);
+            string longurl = Convert.ToString(dt.Rows[0]["long_url"]);
+            sql = "Insert into stats (click_date, ip, referer, shortUrl_id, Browser, Platform, IsMobileDevice, MobileDeviceManufacturer, MobileDeviceModel)" +
+                " values ('" + DateTime.Now.ToString("yyyy-MM-dd HH:mm:ss") + "','" + UserHostAddress + "','" + referer + "','" + id + "','" + browser + "','" + platform + "','" +
+                    ismobile + "','" + manuf + "','" + model + "')";
+            database.ExecuteNonQuery(sql);
+            return longurl;
+        }
+
+        //RAVI 03-02-22
+        public DataTable GetUserReport_B404_02_22(string userid, string url, string frm, string to, bool isMob, string richmedia = "", string filterMode = "")
+        {
+            // Add Country group by 02-02-22
+            //d b Y : h i p
+
+            string sql = "";
+
+            if (!isMob)
+            {
+                sql = @"SELECT row_number() over (order by U.added) AS SLNO,u.userid, U.long_url as LongURL,u.domainname + U.segment as SmallURL,
+DATEADD(MINUTE," + Helper.Global.addMinutes + @",convert(varchar,U.added,106) + ' ' + convert(varchar,U.added,108)) as CreationDate,
+'' as No_of_url_sent, COUNT(S.SHORTURL_ID) AS No_Of_Hits,'' as mobtrack,
+ U.id as URLID,U.SEGMENT FROM short_urls U left join stats S on U.ID = S.SHORTURL_ID
+where U.userid = '" + userid + "' and U.added between '" + frm + "' and '" + to + "' AND U.mobtrack<>'Y' and U.richmediaurl='" + (richmedia == "Y" ? "1" : "0") + "' GROUP BY u.userid,u.id,U.long_url,u.domainname,U.SEGMENT,U.ADDED,S.SHORTURL_ID order by U.added ";
+            }
+            else
+            {
+                sql = @"SELECT row_number() over (order by U.added,U.id) AS SLNO, U.long_url as LongURL, u.domainname + U.segment as SmallURL,
+DATEADD(MINUTE," + Helper.Global.addMinutes + @",convert(varchar,U.added,106) + ' ' + convert(varchar,U.added,108)) as CreationDate, 
+COUNT(DISTINCT m.mobile) AS No_of_url_sent,
+sum(case when S.SHORTURL_ID is null then 0 else 1 end) AS No_Of_Hits,
+U.id as URLID,ISNULL(U.URLNAME,'') AS URLNAME , /* cm.name */ ''  AS Country, DATEADD(MINUTE,0,convert(varchar,U.added,106) + ' ' + convert(varchar,U.added,108)) as clkdate FROM short_urls U inner join mobtrackurl m on U.ID = m.urlid
+/* inner join SMSFILEUPLOAD F on F.ID = m.fileId AND F.USERID=u.userid inner join countrymast cm on cm.phonecode=F.COUNTRYCODE */
+left join mobstats S on U.ID = S.SHORTURL_ID and s.urlid=m.id
+where U.userid = '" + userid + "' and U.richmediaurl='" + (richmedia == "Y" ? "1" : "0") + "' and U.added between '" + frm + "' and '" + to + @"'
+GROUP BY U.long_url,u.domainname,U.SEGMENT,U.ADDED,m.urlid,U.id,U.URLNAME /* ,cm.name */ order by U.added,U.id ";
+            }
+
+            if (filterMode == "2")
+            {
+                if (!isMob)
+                {
+                    sql = @"SELECT row_number() over (order by U.added) AS SLNO,u.userid, U.long_url as LongURL,u.domainname + U.segment as SmallURL,
+DATEADD(MINUTE," + Helper.Global.addMinutes + @",convert(varchar,U.added,106) + ' ' + convert(varchar,U.added,108)) as CreationDate,
+'' as No_of_url_sent, COUNT(S.SHORTURL_ID) AS No_Of_Hits,'' as mobtrack,
+ U.id as URLID,U.SEGMENT FROM short_urls U left join stats S on U.ID = S.SHORTURL_ID
+where U.userid = '" + userid + "' and S.Click_date between '" + frm + "' and '" + to + "' AND U.mobtrack<>'Y' and U.richmediaurl='" + (richmedia == "Y" ? "1" : "0") + "' GROUP BY u.userid,u.id,U.long_url,u.domainname,U.SEGMENT,U.ADDED,S.SHORTURL_ID order by S.click_date ";
+                }
+                else
+                {
+                    sql = @"SELECT row_number() over (order by U.added,U.id) AS SLNO, U.long_url as LongURL, u.domainname + U.segment as SmallURL,
+DATEADD(MINUTE," + Helper.Global.addMinutes + @",convert(varchar,U.added,106) + ' ' + convert(varchar,U.added,108)) as CreationDate, 
+COUNT(DISTINCT m.mobile) AS No_of_url_sent,
+sum(case when S.SHORTURL_ID is null then 0 else 1 end) AS No_Of_Hits,convert(varchar,S.Click_date,102) as clkdate,
+U.id as URLID,ISNULL(U.URLNAME,'') AS URLNAME  , /* cm.name */ '' AS Country FROM short_urls U inner join mobtrackurl m on U.ID = m.urlid
+/* inner join SMSFILEUPLOAD F on F.ID = m.fileId AND F.USERID=u.userid inner join countrymast cm on cm.phonecode=F.COUNTRYCODE */
+left join mobstats S on U.ID = S.SHORTURL_ID and s.urlid=m.id
+where U.userid = '" + userid + "' and U.richmediaurl='" + (richmedia == "Y" ? "1" : "0") + "' and S.Click_date between '" + frm + "' and '" + to + @"'
+GROUP BY U.long_url,u.domainname,U.SEGMENT,u.added,m.urlid,U.id,U.URLNAME,convert(varchar,S.Click_date,102) /* ,cm.name */ 
+order by convert(varchar,S.Click_date,102) desc, U.id ";
+                }
+
+            }
+
+            DataTable dt = new DataTable("dt");
+            dt = database.GetDataTable(sql);
+            //if (dt.Rows.Count > 0)
+            //    for (int i = 0; i < dt.Rows.Count; i++)
+            //        dt.Rows[i]["SLNO"] = i + 1;
+            return dt;
+        }
+        public DataTable GetClickMobileNumbers_B404_02_22(string userid, string id)
+        {
+            string user1 = "tmp_" + userid;
+            database.ExecuteNonQuery("if exists (select * from sys.tables where name='" + user1 + @"') drop table " + user1 + @"; Create table " + user1 + @" (MobileNo numeric) ;  ");
+
+            string sql = "";
+            sql = @"Insert into " + user1 + @" SELECT distinct m.mobile as mobileNo 
+                FROM mobtrackurl m inner join mobstats s on m.urlid = s.shortUrl_id and m.id = s.urlid
+                where m.urlid = '" + id + @"'  ; 
+                SELECT distinct convert(varchar,m.mobile) as mobile 
+                FROM mobtrackurl m inner join mobstats s on m.urlid = s.shortUrl_id and m.id = s.urlid
+                where m.urlid = '" + id + "' ";
+            DataTable dt = new DataTable("dt");
+            dt = database.GetDataTable(sql);
+            return dt;
+        }
+        public DataTable GetUserReportDetail_B404_02_22(string userid, string id, bool mobtrk, string s1 = "", string s2 = "", string Country = "")
+        {
+            // Add Country Parameter on 02-02-31
+            //d b Y : h i p
+
+            string sql = "";
+            if (mobtrk)
+            {
+                //' ' + left(convert(varchar,m.mobile),len(convert(varchar,m.mobile))-4) + 'XXXX'
+                //sql = @"SELECT row_number() over ( order by click_date) as SLNO,convert(varchar,m.mobile) as mobile,
+                //DATEADD(MINUTE," + Helper.Global.addMinutes + @",convert(varchar,m.sentdate,106) + ' ' + convert(varchar,m.sentdate,108)) as smsdate, 
+                //DATEADD(MINUTE," + Helper.Global.addMinutes + @",convert(varchar,s.click_date,106) + ' ' + convert(varchar,s.click_date,108)) as ClickDate, 
+                //isnull(s.ip,'') as ip, isnull(L.city,'') + case when isnull(L.city,'')='' then ' ' else ', ' end + isnull(L.RegionName,'') as referer,s.Browser, s.Platform, s.IsMobileDevice, s.MobileDeviceManufacturer, s.MobileDeviceModel
+                //FROM mobtrackurl m inner join mobstats s on m.urlid = s.shortUrl_id and m.id = s.urlid
+                //LEFT JOIN (select distinct query,city,regionName,segment,operator from iplocation) L on s.ip=L.query and m.segment=L.segment
+                //where m.urlid = '" + id + "' AND click_date Between '" + s1 + "' and '" + s2 + "' order by click_date desc";
+
+
+                sql = @"SELECT row_number() over ( order by click_date) as SLNO,convert(varchar,m.mobile) as mobile,
+                DATEADD(MINUTE," + Helper.Global.addMinutes + @",convert(varchar,m.sentdate,106) + ' ' + convert(varchar,m.sentdate,108)) as smsdate, 
+                DATEADD(MINUTE," + Helper.Global.addMinutes + @",convert(varchar,s.click_date,106) + ' ' + convert(varchar,s.click_date,108)) as ClickDate, 
+                isnull(L.operator,'') as operator, isnull(L.RegionName,'') as referer,s.Browser, s.Platform, s.IsMobileDevice, s.MobileDeviceManufacturer, s.MobileDeviceModel
+                FROM mobtrackurl m with(nolock) inner join mobstats s with(nolock) on m.urlid = s.shortUrl_id and m.id = s.urlid
+                /* inner join SMSFILEUPLOAD F on F.ID = m.fileId inner join countrymast cm on cm.phonecode=F.COUNTRYCODE */
+                LEFT JOIN (select distinct regionName,segment,operator,mobile from iplocation with(nolock)) L on m.mobile=L.mobile and m.segment=L.segment
+                where m.urlid = '" + id + "' AND click_date Between '" + s1 + "' and '" + s2 + "' /* and cm.name='" + Country + "' */ order by click_date desc";
+            }
+            else
+            {
+                sql = @"SELECT row_number() over ( order by s.click_date) As SLNO,'' as mobile,'' as smsdate, 
+                            DATEADD(MINUTE," + Helper.Global.addMinutes + @",convert(varchar,s.click_date,106) + ' ' + convert(varchar,s.click_date,108)) as ClickDate,               
+                            s.ip, isnull(L.city,'') + case when isnull(L.city,'')='' then ' ' else ', ' end + isnull(L.RegionName,'') referer,
+                            s.Browser, s.Platform, s.IsMobileDevice, s.MobileDeviceManufacturer, s.MobileDeviceModel from stats s
+                            inner join short_urls u with(nolock) on s.shorturl_id = u.id
+                            LEFT JOIN  iplocation L with(nolock) on s.ip=L.query and u.segment=L.segment 
+                            where s.shorturl_id = '" + id + @"' group by 
+                            DATEADD(MINUTE," + Helper.Global.addMinutes + @",convert(varchar,s.click_date,106) + ' ' + convert(varchar,s.click_date,108)) , s.ip, 
+                isnull(L.city, '') + case when isnull(L.city,'')= '' then ' ' else ', ' end + isnull(L.RegionName, '') ,
+                s.Browser, s.Platform, s.IsMobileDevice, s.MobileDeviceManufacturer, s.MobileDeviceModel,s.click_date 
+                            order by s.click_date desc";
+
+            }
+            DataTable dt = new DataTable("dt");
+            dt = database.GetDataTable(sql);
+            return dt;
+        }
+
+        public DataTable GetUserReport(string userid, string url, string frm, string to, bool isMob, string richmedia = "", string filterMode = "")
+        {
+            // Add Country group by 02-02-22
+            //d b Y : h i p
+
+            string sql = "";
+
+            if (!isMob)
+            {
+                sql = @"SELECT row_number() over (order by U.added) AS SLNO,u.userid, U.long_url as LongURL,u.domainname + U.segment as SmallURL,
+DATEADD(MINUTE," + Helper.Global.addMinutes + @",convert(varchar,U.added,106) + ' ' + convert(varchar,U.added,108)) as CreationDate,
+'' as No_of_url_sent, COUNT(S.SHORTURL_ID) AS No_Of_Hits,'' as mobtrack,
+ U.id as URLID,U.SEGMENT FROM short_urls U left join stats S on U.ID = S.SHORTURL_ID
+where U.userid = '" + userid + "' and U.added between '" + frm + "' and '" + to + "' AND U.mobtrack<>'Y' and U.richmediaurl='" + (richmedia == "Y" ? "1" : "0") + "' GROUP BY u.userid,u.id,U.long_url,u.domainname,U.SEGMENT,U.ADDED,S.SHORTURL_ID order by U.added ";
+            }
+            else
+            {
+                sql = @"SELECT row_number() over (order by U.added,U.id) AS SLNO, U.long_url as LongURL, u.domainname + U.segment as SmallURL,
+DATEADD(MINUTE," + Helper.Global.addMinutes + @",convert(varchar,U.added,106) + ' ' + convert(varchar,U.added,108)) as CreationDate, 
+COUNT(DISTINCT m.mobile) AS No_of_url_sent,
+sum(case when S.SHORTURL_ID is null then 0 else 1 end) AS No_Of_Hits,
+U.id as URLID,ISNULL(U.URLNAME,'') AS URLNAME ,cm.name Country,convert(varchar,U.added,102) as clkdate,F.COUNTRYCODE FROM short_urls U inner join mobtrackurl m on U.ID = m.urlid
+inner join SMSFILEUPLOAD F on F.ID = m.fileId AND F.USERID=u.userid inner join countrymast cm on cm.phonecode=F.COUNTRYCODE
+left join mobstats S on U.ID = S.SHORTURL_ID and s.urlid=m.id
+where U.userid = '" + userid + "' and U.richmediaurl='" + (richmedia == "Y" ? "1" : "0") + "' and U.added between '" + frm + "' and '" + to + @"'
+GROUP BY U.long_url,u.domainname,U.SEGMENT,U.ADDED,m.urlid,U.id,U.URLNAME,cm.name,F.COUNTRYCODE order by U.added,U.id ";
+            }
+
+            if (filterMode == "2")
+            {
+                if (!isMob)
+                {
+                    sql = @"SELECT row_number() over (order by U.added) AS SLNO,u.userid, U.long_url as LongURL,u.domainname + U.segment as SmallURL,
+DATEADD(MINUTE," + Helper.Global.addMinutes + @",convert(varchar,U.added,106) + ' ' + convert(varchar,U.added,108)) as CreationDate,
+'' as No_of_url_sent, COUNT(S.SHORTURL_ID) AS No_Of_Hits,'' as mobtrack,
+ U.id as URLID,U.SEGMENT FROM short_urls U left join stats S on U.ID = S.SHORTURL_ID
+where U.userid = '" + userid + "' and S.Click_date between '" + frm + "' and '" + to + "' AND U.mobtrack<>'Y' and U.richmediaurl='" + (richmedia == "Y" ? "1" : "0") + "' GROUP BY u.userid,u.id,U.long_url,u.domainname,U.SEGMENT,U.ADDED,S.SHORTURL_ID order by S.click_date ";
+                }
+                else
+                {
+                    sql = @"SELECT row_number() over (order by U.added,U.id) AS SLNO, U.long_url as LongURL, u.domainname + U.segment as SmallURL,
+DATEADD(MINUTE," + Helper.Global.addMinutes + @",convert(varchar,U.added,106) + ' ' + convert(varchar,U.added,108)) as CreationDate, 
+COUNT(DISTINCT m.mobile) AS No_of_url_sent,
+sum(case when S.SHORTURL_ID is null then 0 else 1 end) AS No_Of_Hits,convert(varchar,S.Click_date,102) as clkdate,
+U.id as URLID,ISNULL(U.URLNAME,'') AS URLNAME ,cm.name Country,F.COUNTRYCODE FROM short_urls U inner join mobtrackurl m on U.ID = m.urlid
+inner join SMSFILEUPLOAD F on F.ID = m.fileId AND F.USERID=u.userid inner join countrymast cm on cm.phonecode=F.COUNTRYCODE
+left join mobstats S on U.ID = S.SHORTURL_ID and s.urlid=m.id
+where U.userid = '" + userid + "' and U.richmediaurl='" + (richmedia == "Y" ? "1" : "0") + "' and S.Click_date between '" + frm + "' and '" + to + @"'
+GROUP BY U.long_url,u.domainname,U.SEGMENT,u.added,m.urlid,U.id,U.URLNAME,convert(varchar,S.Click_date,102),cm.name,F.COUNTRYCODE order by convert(varchar,S.Click_date,102) desc, U.id ";
+                }
+
+            }
+
+            DataTable dt = new DataTable("dt");
+            dt = database.GetDataTable(sql);
+            //if (dt.Rows.Count > 0)
+            //    for (int i = 0; i < dt.Rows.Count; i++)
+            //        dt.Rows[i]["SLNO"] = i + 1;
+            return dt;
+        }
+        public DataTable GetClickMobileNumbers(string userid, string id, string s1 = "", string s2 = "", string CountryCode = "")
+        {
+            // add two parameter clkdate and Country on 03-02-22
+            string user1 = "tmp_" + userid;
+            database.ExecuteNonQuery("if exists (select * from sys.tables where name='" + user1 + @"') drop table " + user1 + @"; Create table " + user1 + @" (MobileNo numeric) ;  ");
+
+            string sql = "";
+            sql = @"Insert into " + user1 + @" SELECT distinct m.mobile as mobileNo 
+                FROM mobtrackurl m inner join mobstats s on m.urlid = s.shortUrl_id and m.id = s.urlid inner join SMSFILEUPLOAD F on F.ID = m.fileId 
+                where m.urlid = '" + id + "' and f.COUNTRYCODE='" + CountryCode + "' AND click_date between '" + s1 + "' and '" + s2 + @"'   ; 
+                SELECT distinct convert(varchar,m.mobile) as mobile 
+                FROM mobtrackurl m inner join mobstats s on m.urlid = s.shortUrl_id and m.id = s.urlid inner join SMSFILEUPLOAD F on F.ID = m.fileId 
+                where m.urlid = '" + id + "' and f.COUNTRYCODE='" + CountryCode + "' AND click_date between '" + s1 + "' and '" + s2 + @"'   ";
+            DataTable dt = new DataTable("dt");
+            dt = database.GetDataTable(sql);
+            return dt;
+        }
+        public DataTable GetUserReportDetail(string userid, string id, bool mobtrk, string s1 = "", string s2 = "", string CountryCode = "")
+        {
+            // Add Country Parameter on 02-02-31
+            // Add ClickDate column while filter type is creation date on 03-02-22
+            //d b Y : h i p
+
+            string sql = "";
+            if (mobtrk)
+            {
+                //' ' + left(convert(varchar,m.mobile),len(convert(varchar,m.mobile))-4) + 'XXXX'
+                //sql = @"SELECT row_number() over ( order by click_date) as SLNO,convert(varchar,m.mobile) as mobile,
+                //DATEADD(MINUTE," + Helper.Global.addMinutes + @",convert(varchar,m.sentdate,106) + ' ' + convert(varchar,m.sentdate,108)) as smsdate, 
+                //DATEADD(MINUTE," + Helper.Global.addMinutes + @",convert(varchar,s.click_date,106) + ' ' + convert(varchar,s.click_date,108)) as ClickDate, 
+                //isnull(s.ip,'') as ip, isnull(L.city,'') + case when isnull(L.city,'')='' then ' ' else ', ' end + isnull(L.RegionName,'') as referer,s.Browser, s.Platform, s.IsMobileDevice, s.MobileDeviceManufacturer, s.MobileDeviceModel
+                //FROM mobtrackurl m inner join mobstats s on m.urlid = s.shortUrl_id and m.id = s.urlid
+                //LEFT JOIN (select distinct query,city,regionName,segment,operator from iplocation) L on s.ip=L.query and m.segment=L.segment
+                //where m.urlid = '" + id + "' AND click_date Between '" + s1 + "' and '" + s2 + "' order by click_date desc";
+
+
+                sql = @"SELECT row_number() over ( order by click_date) as SLNO,convert(varchar,m.mobile) as mobile,
+                DATEADD(MINUTE," + Helper.Global.addMinutes + @",convert(varchar,m.sentdate,106) + ' ' + convert(varchar,m.sentdate,108)) as smsdate, 
+                DATEADD(MINUTE," + Helper.Global.addMinutes + @",convert(varchar,s.click_date,106) + ' ' + convert(varchar,s.click_date,108)) as ClickDate, 
+                isnull(L.operator,'') as operator, isnull(L.RegionName,'') as referer,s.Browser, s.Platform, s.IsMobileDevice, s.MobileDeviceManufacturer, s.MobileDeviceModel
+                FROM mobtrackurl m with(nolock) inner join mobstats s with(nolock) on m.urlid = s.shortUrl_id and m.id = s.urlid
+                inner join SMSFILEUPLOAD F on F.ID = m.fileId
+                LEFT JOIN (select distinct regionName,segment,operator,mobile from iplocation with(nolock)) L on m.mobile=L.mobile and m.segment=L.segment
+                where m.urlid = '" + id + "' AND click_date Between '" + s1 + "' and '" + s2 + "' and F.COUNTRYCODE='" + CountryCode + "' order by click_date desc";
+            }
+            else
+            {
+                sql = @"SELECT row_number() over ( order by s.click_date) As SLNO,'' as mobile,'' as smsdate, 
+                            DATEADD(MINUTE," + Helper.Global.addMinutes + @",convert(varchar,s.click_date,106) + ' ' + convert(varchar,s.click_date,108)) as ClickDate,               
+                            s.ip, isnull(L.city,'') + case when isnull(L.city,'')='' then ' ' else ', ' end + isnull(L.RegionName,'') referer,
+                            s.Browser, s.Platform, s.IsMobileDevice, s.MobileDeviceManufacturer, s.MobileDeviceModel from stats s
+                            inner join short_urls u with(nolock) on s.shorturl_id = u.id
+                            LEFT JOIN  iplocation L with(nolock) on s.ip=L.query and u.segment=L.segment 
+                            where s.shorturl_id = '" + id + @"' group by 
+                            DATEADD(MINUTE," + Helper.Global.addMinutes + @",convert(varchar,s.click_date,106) + ' ' + convert(varchar,s.click_date,108)) , s.ip, 
+                isnull(L.city, '') + case when isnull(L.city,'')= '' then ' ' else ', ' end + isnull(L.RegionName, '') ,
+                s.Browser, s.Platform, s.IsMobileDevice, s.MobileDeviceManufacturer, s.MobileDeviceModel,s.click_date 
+                            order by s.click_date desc";
+
+            }
+            DataTable dt = new DataTable("dt");
+            dt = database.GetDataTable(sql);
+            return dt;
+        }
+        //-----------------
+        public DataTable GetDemoUserReportDetail(string Mobile, string url, string frm, string to)
+        {
+            //d b Y : h i p
+            //string sql = "SELECT long_url as LongURL,concat('http://emim.in/', segment) as SmallURL,DATE_FORMAT(added,'%d/%m/%Y') as CreationDate, num_of_clicks as No_Of_Hits FROM short_urls s where userid='" + userid + "'";
+            string sql = @"select * from (
+SELECT 0 AS SLNO, U.long_url as LongURL,concat('" + url + @"', U.segment) as SmallURL,
+DATE_FORMAT(U.added, '%d-%b-%Y') as CreationDate,COUNT(S.SHORTURL_ID) AS No_Of_Hits,
+U.id as URLID FROM short_urls U left join stats S on U.ID = S.SHORTURL_ID
+where U.userid = '" + Mobile + "' and U.added between '" + frm + "' and '" + to + @" 23:59:59'
+GROUP BY U.long_url,U.SEGMENT,U.ADDED,S.SHORTURL_ID
+union all
+SELECT 0 AS SLNO, U.long_url as LongURL,concat('" + url + @"', U.segment) as SmallURL,
+DATE_FORMAT(U.added, '%d-%b-%Y') as CreationDate,COUNT(S.SHORTURL_ID) AS No_Of_Hits,
+U.id as URLID FROM t_short_urls U left join stats S on U.ID = S.SHORTURL_ID
+where U.userid = '" + Mobile + "' and U.added between '" + frm + "' and '" + to + @" 23:59:59'
+GROUP BY U.long_url,U.SEGMENT,U.ADDED,S.SHORTURL_ID ) x
+order by x.CreationDate";
+
+            DataTable dt = new DataTable("dt");
+            dt = database.GetDataTable(sql);
+            if (dt.Rows.Count > 0)
+                for (int i = 0; i < dt.Rows.Count; i++)
+                    dt.Rows[i]["SLNO"] = i + 1;
+            return dt;
+        }
+
+        public DataTable GetUserScheduledReport(string userid, string url, string frm, string to)
+        {
+            //d b Y : h i p
+
+            string sql = "";
+            if (userid == "0")
+            {
+                sql = @"SELECT row_number() over (order by U.added) AS SLNO,
+
+where U.userid = '" + userid + "' and U.added between '" + frm + "' and '" + to + "' AND U.mobtrack<>'Y'  GROUP BY u.userid,u.id,U.long_url,u.domainname,U.SEGMENT,U.ADDED,S.SHORTURL_ID order by U.added ";
+            }
+            else
+            {
+                sql = @"SELECT row_number() over (order by U.added,U.id) AS SLNO, U.long_url as LongURL, u.domainname + U.segment as SmallURL,
+convert(varchar,U.added,106) + ' ' + convert(varchar,U.added,108) as CreationDate, 
+COUNT(DISTINCT m.mobile) AS No_of_url_sent,
+sum(case when S.SHORTURL_ID is null then 0 else 1 end) AS No_Of_Hits,
+U.id as URLID FROM short_urls U inner join mobtrackurl m on U.ID = m.urlid
+left join mobstats S on U.ID = S.SHORTURL_ID and s.urlid=m.id
+where U.userid = '" + userid + "' and  U.added between '" + frm + "' and '" + to + @"'
+GROUP BY U.long_url,u.domainname,U.SEGMENT,U.ADDED,m.urlid,U.id order by U.added,U.id ";
+            }
+            DataTable dt = new DataTable("dt");
+            dt = database.GetDataTable(sql);
+            //if (dt.Rows.Count > 0)
+            //    for (int i = 0; i < dt.Rows.Count; i++)
+            //        dt.Rows[i]["SLNO"] = i + 1;
+            return dt;
+        }
+
+        public bool FileUploadStopped()
+        {
+            bool b = false;
+            string sql = "Select stopFileUpload from SettingMast ";
+            b = Convert.ToBoolean(Helper.dbmain.GetScalarValue(sql));
+            //if (s == "1") b = true;
+            return b;
+        }
+
+        public bool CheckAuthorization(string code)
+        {
+            bool b = false;
+            string cd = Convert.ToString(ConfigurationManager.AppSettings["AuthorizationCode"]);
+            if (code == cd) b = true;
+            return b;
+        }
+
+        public bool UserExists(string UserID)
+        {
+            bool b = false;
+            string sql = "Select UserID from " + db + ".user where UserID='" + UserID + "' order by userid LIMIT 1";
+            string s = Convert.ToString(database.GetScalarValue(sql));
+            if (s != "") b = true;
+            return b;
+        }
+        public DataTable GetValidUser(string usr)
+        {
+            string sql = "Select UserID,noofurl,noofhit,DATE_FORMAT(createdon, '%d/%b/%Y') as createdon,DATE_FORMAT(validupto, '%d/%b/%Y') as validupto1,validupto,CASE WHEN ISNULL(mobtrack) THEN 'N' ELSE mobtrack end as mobtrack from " + db + ".user where UserID='" + usr + "'";
+            DataTable dt = database.GetDataTable(sql);
+            return dt;
+        }
+
+        public void UpdateUser(string nourl, string nohit, string usr, string validity, bool mobtrk)
+        {
+            string sql = "";
+            string s = (mobtrk ? "Y" : "N");
+            if (validity == "")
+                sql = "Update user set noofurl='" + nourl + "', noofhit='" + nohit + "', mobtrack='" + s + "' where UserID='" + usr + "'";
+            else
+                sql = "Update user set noofurl='" + nourl + "', noofhit='" + nohit + "', validupto = '" + validity + "', mobtrack='" + s + "' where UserID='" + usr + "'";
+            database.ExecuteNonQuery(sql);
+        }
+        public string GetMobTrkOfUser(string UserID)
+        {
+            string sql = "Select isnull(mobtrack,'N') from customer where Username='" + UserID + "'";
+            string s = Convert.ToString(database.GetScalarValue(sql));
+            return s;
+        }
+        public bool Login(string UserID, string Password)
+        {
+            bool b = false;
+            string sql = "Select UserID from " + db + ".user where UserID='" + UserID + "' order by userid LIMIT 1";
+            string s = Convert.ToString(database.GetScalarValue(sql));
+            if (s != "") b = true;
+            return b;
+        }
+        public string GetURLbal(string UserID)
+        {
+            string sql = "Select noofurl from CUSTOMER where Username='" + UserID + "' ";
+            string s = Convert.ToString(database.GetScalarValue(sql));
+            return s;
+        }
+        public DataTable GetUserParameter(string usr)
+        {
+            string sql = "select * from CUSTOMER with(nolock) where username='" + usr + "'";
+            DataTable dt = database.GetDataTable(sql);
+            return dt;
+        }
+        public DataTable GetUserParameterAsPerCountry(string usr)
+        {
+            string sql = "select countrycode,rate_normalsms,rate_campaign,rate_smartsms,rate_otp,urlrate,dltcharge,c.name as countryName from smsrateaspercountry s with(nolock) " +
+                "left join countryMast c ON s.countrycode=c.phonecode where username='" + usr + "'";
+            DataTable dt = database.GetDataTable(sql);
+            return dt;
+        }
+
+        public DataTable RCSGetUserParameterAsPerCountry(string usr)
+        {
+            string sql = "select CountryCode,TextRate,ImageRate,VideoRate,CardRate,CarouselRate,name from tblrcsratemaster s with(nolock)" +
+                "left join countryMast c ON s.countrycode = c.phonecode where username = '" + usr + "'";
+            DataTable dt = database.GetDataTable(sql);
+            return dt;
+        }
+
+        public string GetCountryName(string ccode)
+        {
+            return Convert.ToString(database.GetScalarValue("select top 1 name from countryMast where phonecode='" + ccode + "' "));
+        }
+        public bool CampaignExistsForDay(string user, string CampNm)
+        {
+            string sql = "Select Count(*) from smsfileupload where UserID='" + user + "' and convert(varchar,uploadtime,102) = convert(varchar,getdate(),102) and campaignname='" + CampNm + "'";
+            int c = Convert.ToInt16(database.GetScalarValue(sql));
+            if (c > 0) return true; else return false;
+        }
+        public DataTable GetUserSMPPACCOUNT(string DLT, string USER)
+        {
+            string sql = "select 'N' as GSM,* from SMPPSETTING where DLTNO ='" + DLT + "'";
+            DataTable dt = database.GetDataTable(sql);
+            if (dt.Rows.Count == 0)
+            {
+                sql = "select 'N' as GSM,* from SMPPSETTING where smppaccountid = (select top 1 smppaccountid from smppaccountuserid where userid='" + USER + "' ) ";
+                dt = database.GetDataTable(sql);
+            }
+            return dt;
+        }
+
+
+        public DataTable GetUserSMPPACCOUNTCountry(string USER, string ccode)
+        {
+            string sql = "select 'N' as GSM,* from SMPPSETTING where smppaccountid = (select top 1 smppaccountid from smppaccountuserid where userid='" + USER + "' AND countrycode='" + ccode + "' ) ";
+            DataTable dt = database.GetDataTable(sql);
+
+            return dt;
+        }
+
+        public string GetLongURL(string segment)
+        {
+            string sql = "Select urlid from mobtrackurl where segment='" + segment + "'";
+            int urlid = Convert.ToInt32(database.GetScalarValue(sql));
+            sql = "Select long_url from short_urls where id='" + urlid.ToString() + "'";
+            string lurl = Convert.ToString(database.GetScalarValue(sql));
+            return lurl;
+        }
+
+        public string GetLongURLforQR(string segment)
+        {
+            string sql = "Select long_url from short_urls where segment='" + segment + "'";
+            string lurl = Convert.ToString(database.GetScalarValue(sql));
+            return lurl;
+        }
+        public bool SegmentExists(string seg)
+        {
+            string sql = "Select count(*) from short_urls where segment='" + seg + "'";
+            DataTable dt = database.GetDataTable(sql);
+            if (dt.Rows[0][0].ToString() == "0")
+                return false;
+            else
+                return true;
+        }
+
+        public bool IsURLExists(string seg, string domain)
+        {
+            string sql = "Select segment from short_urls with (nolock) where segment='" + seg + "' and domainname='" + domain + "' union all " +
+                "Select m.segment from mobtrackurl m with (nolock) inner join short_urls u with (nolock) on m.urlid=u.id where m.segment='" + seg + "' and u.domainname='" + domain + "'";
+            DataTable dt = database.GetDataTable(sql);
+            if (dt.Rows.Count <= 0)
+                return true;
+            else return false;
+        }
+
+        public bool IsShowURL(string seg, string domain)
+        {
+            bool b = false;
+            try
+            {
+                string sql = "";
+                if (seg.Length == 8)
+                {
+                    b = true;
+                    //sql = "select urlid from mobtrackurl where segment = '" + seg + "' ";
+                    //string urlid = Convert.ToString(database.GetScalarValue(sql));
+                    //sql = "Select id,userid from short_urls where id='" + urlid + "'";
+                }
+                else
+                {
+                    sql = "Select id,userid from short_urls with (nolock) where segment='" + seg + "' and mainurl=1 and domainname='" + domain + "'";
+                    DataTable dt = database.GetDataTable(sql);
+                    if (dt.Rows.Count <= 0)
+                        b = true;
+                    else
+                    {
+                        string id = dt.Rows[0]["id"].ToString();
+                        string usr = dt.Rows[0]["userid"].ToString();
+                        Int64 x = Convert.ToInt64(database.GetScalarValue("Select noofhit from customer where Username='" + usr + "'"));
+                        //Int64 y = Convert.ToInt64(database.GetScalarValue("SELECT count(shortUrl_id) FROM stats s where shortUrl_id = '" + id + "'"));
+                        //if (y <= x) b = true;
+                        if (x > 0)
+                        {
+                            b = true;
+                            database.ExecuteNonQuery("update customer set noofhit=noofhit-1 where username='" + usr + "'");
+                        }
+                    }
+                }
+            }
+            catch (Exception ex) { throw ex; }
+            return b;
+        }
+
+        public bool Valid_VerificationLink(string segment)
+        {
+            if (Convert.ToInt16(database.GetScalarValue(" select count(*) from VerifyLink where segment='" + segment + "' and getdate()<=validhitrecdtime and hitrecdtime is null ")) > 0)
+            {
+                //update hittime
+                database.ExecuteNonQuery("Update VerifyLink set hitrecdtime=getdate() where segment='" + segment + "' ");
+                return true;
+            }
+            else return false;
+
+        }
+
+        public bool CreateUser(string UserID, string Password)
+        {
+            bool b = false;
+            string sql = "insert into " + db + ".user (userid, password, validupto, createdon) values ('" + UserID + "','" + Password + "','" + DateTime.Now.AddYears(1).ToString("yyyy-MM-dd", CultureInfo.InvariantCulture) + "','" + DateTime.Now.ToString("yyyy-MM-dd", CultureInfo.InvariantCulture) + "')";
+            database.ExecuteNonQuery(sql);
+            b = true;
+            return b;
+        }
+        public bool TempUserExists(string m)
+        {
+            bool b = false;
+            string sql = "Select Mobile from " + db + ".tempuser where Mobile='" + m + "' ";
+            string s = Convert.ToString(database.GetScalarValue(sql));
+            if (s != "") b = true;
+            return b;
+        }
+
+        public string CreatTempUser(string Name, string Company, string Mobile, string Email, string MainPwd)
+        {
+            string segment = "";
+            segment = NewSegment();
+            string sql = "insert into tempuser (Mobile, Name, Company, Email, segment, pwd, islogin, isAuthorized, creationdate, validupto) " +
+                "values ('" + Mobile + "','" + Name + "','" + Company + "','" + Email + "','" + segment + "','','N','" + (MainPwd == "" ? "N" : "Y") + "',getdate(),DATE_ADD(getdate(),INTERVAL " + (MainPwd == "" ? "15" : "30") + " DAY)) ";
+            database.ExecuteNonQuery(sql);
+            return segment;
+        }
+
+        private string NewSegment()
+        {
+            /*
+            using (var ctx = new ShortnrContext())
+            {
+                int i = 0;
+                while (true)
+                {
+                    string segment = Guid.NewGuid().ToString().Substring(0, 6);
+                    if (!ctx.Tempusers.Where(u => u.segment == segment).Any())
+                    {
+                        if (DateTime.Now > Convert.ToDateTime("13-Nov-2020"))
+                            return "7bs3Pc";
+                        else
+                            return segment;
+                    }
+                    if (i > 30)
+                    {
+                        break;
+                    }
+                    i++;
+                }
+                return string.Empty;
+            }
+            */
+            return "";
+        }
+
+        public DataTable IsSegmentVerified(string id)
+        {
+            string sql = "Select * from tempuser where segment='" + id + "'";
+            DataTable dt = database.GetDataTable(sql);
+            return dt;
+        }
+
+        public bool UpdatePasswordTemp(string Mobile, string Pwd, string isAuthorized)
+        {
+            bool b = false;
+            string sql = "Update tempuser set pwd='" + Pwd + "', islogin='Y' where Mobile='" + Mobile + "'";
+            database.ExecuteNonQuery(sql);
+
+            bool b1 = CreateUser(Mobile, Pwd);
+            string noofurl = (isAuthorized == "N" ? "1" : "1000");
+            database.ExecuteNonQuery("update user set createdon=getdate(), validupto=DATE_ADD(getdate(),INTERVAL " + (isAuthorized == "N" ? "15" : "30") + " DAY) where userid='" + Mobile + "'");
+            UpdateUser(noofurl, "1000", Mobile, "", true);
+            RegnSMS("", Mobile, "", "Y");
+            b = true;
+            return b;
+        }
+
+        public bool UpdatePassword(string user, string Pwd)
+        {
+            bool b = false;
+            string sql = "Update user set password='" + Pwd + "' where UserID='" + user + "'";
+            database.ExecuteNonQuery(sql);
+            b = true;
+            return b;
+        }
+
+        public void RegnSMS(string cName, string Mobile, string s, string v)
+        {
+            DataTable dt = database.GetDataTable("select * from setting");
+            string url1 = Convert.ToString(dt.Rows[0]["smsurl"]);
+            string url2 = url1;
+            string url3 = url1;
+            if (v != "Y")
+            {
+                string ms1 = Convert.ToString(dt.Rows[0]["smstocust"]);
+                ms1 = ms1.Replace("#NAME", cName);
+                ms1 = ms1.Replace("#URL", s);
+                url1 = url1 + "user=" + Convert.ToString(dt.Rows[0]["userid"]) + "&pwd=" + Convert.ToString(dt.Rows[0]["pwd"]) + "&sender=" + Convert.ToString(dt.Rows[0]["sender"]) + "&MobileNo=" + Mobile + "&priority=high&Msgtext=" + ms1;
+
+                string r1 = SMSSENDING(url1);
+
+                string ms2 = Convert.ToString(dt.Rows[0]["sms_b4"]);
+                ms2 = ms2.Replace("#NAME", cName);
+                ms2 = ms2.Replace("#MOBILE", Mobile);
+                url2 = url2 + "user=" + Convert.ToString(dt.Rows[0]["userid"]) + "&pwd=" + Convert.ToString(dt.Rows[0]["pwd"]) + "&sender=" + Convert.ToString(dt.Rows[0]["sender"]) + "&MobileNo=" + Convert.ToString(dt.Rows[0]["salesmobile_b4"]) + "&priority=high&Msgtext=" + ms2;
+
+                if (Convert.ToString(dt.Rows[0]["salesmobile_b4"]) != "0000000000")
+                {
+                    string r2 = SMSSENDING(url2);
+                }
+            }
+            if (v == "Y")
+            {
+                if (Convert.ToString(dt.Rows[0]["salesmobile_aft"]) != "0000000000")
+                {
+                    string nm = Convert.ToString(database.GetScalarValue("Select Name from tempuser where Mobile='" + Mobile + "'"));
+                    string ms3 = Convert.ToString(dt.Rows[0]["sms_aft"]);
+                    ms3 = ms3.Replace("#NAME", nm);
+                    ms3 = ms3.Replace("#MOBILE", Mobile);
+                    url3 = url3 + "user=" + Convert.ToString(dt.Rows[0]["userid"]) + "&pwd=" + Convert.ToString(dt.Rows[0]["pwd"]) + "&sender=" + Convert.ToString(dt.Rows[0]["sender"]) + "&MobileNo=" + Convert.ToString(dt.Rows[0]["salesmobile_aft"]) + "&priority=high&Msgtext=" + ms3;
+                    string r = SMSSENDING(url3);
+                }
+            }
+        }
+
+        public void ReSendOTP(string mob, string cc, string senderid)
+        {
+            string sql = "DELETE FROM verifiedmobile where mobile='" + mob + "'";
+            database.ExecuteNonQuery(sql);
+            CheckAndSendOTP(mob, "", cc, senderid);
+        }
+
+        public string CheckAndSendOTP(string mob, string user, string cc, string senderid)
+        {
+            string sql = "";
+            string s = "";
+            database.ExecuteNonQuery(" if exists (select * from verifiedmobile where mobile='" + mob + "' and verified='N' and dateadd(MINUTE,15,verifiedon) < GETDATE() ) DELETE FROM verifiedmobile where mobile='" + mob + "'");
+            DataTable dt = database.GetDataTable(" SELECT * FROM verifiedmobile where mobile='" + mob + "'");
+            if (dt.Rows.Count > 0)
+            {
+                if (dt.Rows[0]["verified"].ToString() == "Y")
+                    s = "Already";
+                if (dt.Rows[0]["verified"].ToString() == "N")
+                    s = "OTPAlready";
+            }
+            else
+            {
+                Random random = new Random();
+                int r = random.Next(100000, 999999);
+                sql = "Insert into verifiedmobile (mobile, otp, verified, verifiedon) values ('" + mob + "','" + r.ToString() + "','N',getdate())";
+                database.ExecuteNonQuery(sql);
+                SendOTP(mob, r, user, cc, senderid);
+                s = "Start";
+            }
+            return s;
+        }
+        public string OTPVerifyAndUpdate(string mob, string otp)
+        {
+            string sql = "";
+            string s = "";
+            DataTable dt = database.GetDataTable("SELECT * FROM verifiedmobile where mobile='" + mob + "'");
+            if (dt.Rows.Count > 0)
+            {
+                if (dt.Rows[0]["verified"].ToString() == "Y")
+                    s = "Already";
+                if (dt.Rows[0]["verified"].ToString() == "N")
+                {
+                    if (dt.Rows[0]["otp"].ToString() == otp)
+                    {
+                        s = "Y";
+                        database.ExecuteNonQuery("Update verifiedmobile set verified='Y', verifiedon=getdate() where mobile='" + mob + "'");
+                    }
+                    else
+                        s = "InvalidOTP";
+                }
+            }
+            return s;
+        }
+        public void SaveSMSQR(string mob, string msg, string usr, string type)
+        {
+            string sql = "insert into smsqr (mobile, msg, createdon, user, qtype) values ('" + mob + "','" + msg + "',getdate(),'" + usr + "','" + type + "')";
+            database.ExecuteNonQuery(sql);
+        }
+        public void SendOTP(string mobile, int otp, string user, string cc, string senderid)
+        {
+            //DataTable dt = database.GetDataTable("select * from setting");
+            //string url1 = Convert.ToString(dt.Rows[0]["smsurl"]);
+
+            //string ms1 = "OTP to verify your mobile number for emim.in is " + otp.ToString();
+            //string ms1 = "Your SMS verification code is:" + otp.ToString();
+
+            //  string ms1 = "Dear Customer Your OTP for verification is " + otp.ToString() + ".CL";
+            InsertOTPMessage(mobile, otp.ToString(), user, cc, senderid);
+            //url1 = url1 + "user=" + Convert.ToString(dt.Rows[0]["userid"]) + "&authkey=" + Convert.ToString(dt.Rows[0]["pwd"]) + "&sender=" + Convert.ToString(dt.Rows[0]["sender"]) + "&mobile=" + mobile + "&text=" + ms1 + "&rpt=1";
+            //string r1 = SMSSENDING(url1);
+        }
+
+        public void DLRINSER(string user, string s1, string s2)
+        {
+            string sql = string.Format("Insert into DLRRequest (userid, DLRFrom, DLRTo) values ('" + user + "','" + s1 + "','" + s2 + "')");
+            database.ExecuteNonQuery(sql);
+        }
+
+        public DataTable GetReportDLR(string user)
+        {
+            string sql = "";
+            sql = "select Convert(varchar,ReqDate,121)ReqDate,Convert(varchar,DLRFrom,106)DLRFrom,Convert(varchar,DLRTo,106)DLRTo,Generatedpath,Active from DLRRequest where userid='" + user + "' order by ReqDate desc";
+            DataTable dt = database.GetDataTable(sql);
+            return dt;
+        }
+
+
+        public string SMSSENDING(string url)
+        {
+            string getResponseTxt = "";
+            string getStatus = "";
+            WinHttp.WinHttpRequest objWinRq;
+            objWinRq = new WinHttp.WinHttpRequest();
+            try
+            {
+                objWinRq.Open("GET", url, false);
+                objWinRq.SetTimeouts(30000, 30000, 30000, 30000);
+                objWinRq.Send(null);
+                //getResponseTxt = "454545,9878789876,SEND SUCCESSFUL";
+
+                while (!(getStatus != "" && getResponseTxt != ""))
+                {
+                    getStatus = objWinRq.Status + objWinRq.StatusText;
+                    getResponseTxt = objWinRq.ResponseText;
+                }
+                return getResponseTxt;
+            }
+            catch
+            {
+                return getResponseTxt;
+            }
+        }
+
+        public void DeleteURL(string id)
+        {
+            string sql = "";
+            string[] segA = Convert.ToString(database.GetScalarValue("select concat(segment,'$',userid) as t FROM short_urls where id='" + id + "'")).Split('$');
+            string seg = segA[0];
+            string usr = segA[1];
+            if (seg.Substring(seg.Length - 2, 2) == "_Q")
+                seg = seg.Substring(0, seg.Length - 2);
+            else
+                seg = seg + "_Q";
+
+            sql = "Insert into t_short_urls (id, long_url, segment, added, ip, num_of_clicks, userid) select id, long_url, segment, added, ip, num_of_clicks, userid from short_urls where segment='" + seg + "'";
+            database.ExecuteNonQuery(sql);
+            database.ExecuteNonQuery("delete from short_urls where segment = '" + seg + "'");
+
+            sql = "Insert into t_short_urls (id, long_url, segment, added, ip, num_of_clicks, userid) select id, long_url, segment, added, ip, num_of_clicks, userid from short_urls where id='" + id + "'";
+            database.ExecuteNonQuery(sql);
+            database.ExecuteNonQuery("delete from short_urls where id = '" + id + "'");
+
+            database.ExecuteNonQuery("update user set noofurl = noofurl + 1 where UserID='" + usr + "'");
+
+            //string nourl = Convert.ToString(database.GetScalarValue("Select noofurl from user where UserID='" + usr + "'"));
+            //if(Convert.ToInt16(nourl)<=0)
+            //{
+            //    string auth = Convert.ToString(database.GetScalarValue("Select isAuthorized from tempuser where Mobile='" + usr + "'"));
+            //    if(auth != "")
+            //        if(auth == "N")
+            //        {
+            //            database.ExecuteNonQuery("update user set noofurl = '1' where UserID='" + usr + "'");
+            //        }
+            //}
+        }
+
+        public DataTable GetDemoAct(string frm, string to)
+        {
+            string sql = @"SELECT 0 as SLNO, t.Name, t.Mobile,DATE_FORMAT(t.creationdate, '%d-%b-%Y') AS creationdate FROM tempuser t where t.isAuthorized = 'N' and t.creationdate between '" + frm + "' and '" + to + " 23:59:59'";
+            DataTable dt = new DataTable("dt");
+            dt = database.GetDataTable(sql);
+            if (dt.Rows.Count > 0)
+                for (int i = 0; i < dt.Rows.Count; i++)
+                    dt.Rows[i]["SLNO"] = i + 1;
+            return dt;
+        }
+
+        public string getDefaultSMPPAccountId(string cc)
+        {
+            string sql = "select top 1 defaultSMPPacID from tblCountry where counryCode='" + cc + "'";
+            return Convert.ToString(database.GetScalarValue(sql));
+        }
+
+        public double getUserCountryRate(string userid, string cc)
+        {
+            string sql = "select rate_normalsms from smsrateaspercountry where username= '" + userid + "' and countrycode = '" + cc + "'";
+            return Convert.ToDouble(database.GetScalarValue(sql));
+        }
+        public void InsertOTPMessage(string mobile, string otp, string user, string cc, string senderid)
+        {
+            // "Select TOP 1 * from customer where usertype='SYSADMIN'"
+
+            DataTable dt = database.GetDataTable("select * from settings");
+            string msg = Convert.ToString(dt.Rows[0]["OTPWhatsAppmsg"]);
+            msg = msg.Replace("#var1", otp);
+            string s = (cc == "91" ? dt.Rows[0]["senderid"].ToString() : senderid);
+            string smppacountid = (cc == "91" ? dt.Rows[0]["SMPPACCOUNTID"].ToString() : Convert.ToString(getDefaultSMPPAccountId(cc)) + "01");
+
+            string USER = user; // "20200125";
+            string templateid = (cc == "91" ? dt.Rows[0]["templateid"].ToString() : "");
+            string peid = (cc == "91" ? dt.Rows[0]["peid"].ToString() : ""); //getPEid(USER);
+            string sql = @"INSERT INTO [dbo].[MSGTRAN]
+           ([PROVIDER]
+           ,[SMPPACCOUNTID]
+           ,[PROFILEID]
+           ,[MSGTEXT]
+           ,[TOMOBILE]
+           ,[templateid]
+           ,[SENDERID]
+           ,[CREATEDAT]           
+           ,[PICKED_DATETIME],[PEID],[DATACODE])
+            VALUES
+           (
+           ''
+           , '" + smppacountid + @"'
+           , '" + USER + @"'
+           , '" + msg + @"'
+           , '" + mobile + @"'
+           , '" + templateid + @"'
+           , '" + s + @"'
+           , GETDATE()
+           , NULL,'" + peid + "','Default')";
+            Helper.dbmain.ExecuteNonQuery(sql);
+            double rat = getUserCountryRate(user, cc);
+            UpdateAndGetBalance(user, "", 1, rat);
+
+        }
+
+        public string SendURL_SMS_old(string UserID, string mobile, string msg)
+        {
+            DataTable dt = database.GetDataTable("Select smsid, smspwd, smssender from user where UserID='" + UserID + "'");
+            string u = dt.Rows[0]["smsid"].ToString();
+            string p = dt.Rows[0]["smspwd"].ToString();
+            string s = dt.Rows[0]["smssender"].ToString();
+            string url = "";
+            if (UserID.ToUpper() == "ADMIN")
+            {
+                //url = "http://5.189.187.82/sendsms/bulk.php?username=" + u + "&password=" + p + "&type=TEXT&sender=" + s + "&mobile=" + mobile + "&message=" + msg;
+                url = "http://zipping.vispl.in/vapi/pushsms?user=" + u + "&authkey=" + p + "&sender=" + s + "&mobile=" + mobile + "&text=" + msg + "&rpt=1";
+
+            }
+            else
+                url = "http://bulksmsindia.mobi/sendurl.aspx?user=" + u + "&pwd=" + p + "&mobileno=" + mobile + "&msgtext=" + msg + "&senderid=" + s;
+
+            string resp = SMSSENDING(url);
+            return resp;
+        }
+
+
+        public DataTable GetOperatorAndLocation(string mob)
+        {
+            string sql = "select distinct regionName,segment,operator,mobile,country from iplocation with(nolock) where mobile='" + mob + "'";
+            return database.GetDataTable(sql);
+        }
+
+
+        public string GetMobileFromSegment(string segment)
+        {
+            string sql = "select top 1 mobile from mobtrackurl where segment='" + segment + "' order by sentdate desc";
+            return Convert.ToString(database.GetScalarValue(sql));
+        }
+
+        public string SaveMobStatus(string segment, string referer, string ip, string browser, string platform, string ismobile, string manuf, string model)
+        {
+            string sql = "";
+            string urlid = "";
+            string shortUrl_id = "";
+            sql = "Select id,urlid from mobtrackurl where segment = '" + segment + "'";
+            DataTable dt = database.GetDataTable(sql);
+            if (dt.Rows.Count > 1)
+            {
+                sql = "Select id,urlid from mobtrackurl where segment = '" + segment + "' and sentdate = (Select max(sentdate) from mobtrackurl where segment = '" + segment + "')";
+                DataTable dt1 = database.GetDataTable(sql);
+                urlid = dt1.Rows[0]["id"].ToString();
+                shortUrl_id = dt1.Rows[0]["urlid"].ToString();
+            }
+            else
+            {
+                urlid = dt.Rows[0]["id"].ToString();
+                shortUrl_id = dt.Rows[0]["urlid"].ToString();
+            }
+            sql = "Insert into mobstats (click_date, ip, referer, shortUrl_id, Browser, Platform, IsMobileDevice, MobileDeviceManufacturer, MobileDeviceModel, urlid)" +
+                "values (getdate(),'" + ip + "','" + referer + "','" + shortUrl_id + "','" + browser + "','" + platform + "'," +
+                "'" + ismobile + "','" + manuf + "','" + model + "','" + urlid + "')";
+            database.ExecuteNonQuery(sql);
+            string url = Convert.ToString(database.GetScalarValue("Select long_url from short_urls where id = '" + shortUrl_id + "'"));
+            return url;
+        }
+        public string GetMobTrkUrlIDforReDirect(string segment)
+        {
+            string sql = "";
+            sql = "Select id,urlid from mobtrackurl where segment = '" + segment + "'";
+            DataTable dt = database.GetDataTable(sql);
+            string shortUrl_id = "";
+            if (dt.Rows.Count > 1)
+            {
+                sql = "Select id,urlid from mobtrackurl where segment = '" + segment + "' and sentdate = (Select max(sentdate) from mobtrackurl where segment = '" + segment + "')";
+                DataTable dt1 = database.GetDataTable(sql);
+                shortUrl_id = dt1.Rows[0]["urlid"].ToString();
+            }
+            else
+            {
+                shortUrl_id = dt.Rows[0]["urlid"].ToString();
+            }
+            return shortUrl_id;
+        }
+        public string SaveStatus(string segment, string referer, string ip, string browser, string platform, string ismobile, string manuf, string model)
+        {
+            string sql = "";
+            sql = "Select id from short_urls where segment = '" + segment + "'";
+            DataTable dt = database.GetDataTable(sql);
+            string urlid = dt.Rows[0]["id"].ToString();
+            string shortUrl_id = dt.Rows[0]["id"].ToString();
+            sql = "Insert into stats (click_date, ip, referer, shortUrl_id, Browser, Platform, IsMobileDevice, MobileDeviceManufacturer, MobileDeviceModel)" +
+                "values (getdate(),'" + ip + "','" + referer + "','" + shortUrl_id + "','" + browser + "','" + platform + "'," +
+                "'" + ismobile + "','" + manuf + "','" + model + "')";
+            database.ExecuteNonQuery(sql);
+            string url = Convert.ToString(database.GetScalarValue("Select long_url from short_urls where id = '" + shortUrl_id + "'"));
+            return url;
+        }
+        public string GetUrlIDforReDirect(string segment)
+        {
+            string sql = "";
+            sql = "Select id from short_urls where segment = '" + segment + "'";
+            DataTable dt = database.GetDataTable(sql);
+            string shortUrl_id = dt.Rows[0]["id"].ToString();
+            return shortUrl_id;
+        }
+        public string GetLongURLfromURLID(string urlid)
+        {
+            string url = Convert.ToString(database.GetScalarValue("Select long_url from short_urls where id = '" + urlid + "'"));
+            return url;
+        }
+        public DataTable LoadMobileGroup()
+        {
+            DataTable dt = new DataTable("dt");
+            string sql = "Select Distinct GrpName from mobilegroup order by GrpName";
+            dt = database.GetDataTable(sql);
+            return dt;
+        }
+        public DataTable GetMobileNumberFromGroup(string grpNm)
+        {
+            DataTable dt = new DataTable("dt");
+            string sql = "Select Distinct MobileNo from mobilegroup where grpName='" + grpNm + "'";
+            dt = database.GetDataTable(sql);
+            return dt;
+        }
+        public void SaveMobileGroup(DataTable dt, string GrpName)
+        {
+            string sql = "";
+
+            for (int i = 0; i < dt.Rows.Count; i++)
+            {
+                sql = "Insert into MobileGroup (mobileno,grpname) values ('" + dt.Rows[i][0].ToString() + "','" + GrpName + "')";
+
+                try
+                {
+                    database.ExecuteNonQuery(sql);
+                }
+                catch (Exception ex)
+                { }
+            }
+        }
+
+        public string SaveAPIVal(string val)
+        {
+            string sql = "insert into apival (apival) values ('" + val + "')";
+            database.ExecuteNonQuery(sql);
+            return "SUCCESS";
+        }
+        public string SaveTOISurveyVal(string Name, string MainSource, string TimeSpend, string TimeSpendB4LockDown, string ReadNewsPaper, string ReadingFrequency, string CompareExperience, string GettingNewspaper, string SourceOfNews, string HowWorried, string OutlookOnRevival, string Age, string Gender, string City, string Mobile)
+        {
+            string sql = "insert into toisurvey (Name,MainSource,TimeSpend,TimeSpendB4LockDown,ReadNewsPaper,ReadingFrequency,CompareExperience,GettingNewspaper,SourceOfNews,HowWorried,OutlookOnRevival,Age,Gender,City,Mobile) values ";
+            sql = sql + "('" + Name + "', '" + MainSource + "', '" + TimeSpend + "', '" + TimeSpendB4LockDown + "', '" + ReadNewsPaper + "', '" + ReadingFrequency + "', '" + CompareExperience + "', '" + GettingNewspaper + "', '" + SourceOfNews + "', '" + HowWorried + "', '" + OutlookOnRevival + "', '" + Age + "', '" + Gender + "', '" + City + "', '" + Mobile + "')";
+            database.ExecuteNonQuery(sql);
+            return "SUCCESS";
+        }
+        public string SaveAPIValLead(string sDate, string sTime, string name, string email, string mobile)
+        {
+            string sql = "insert into leaddata (sDate, sTime, name, email, mobile) values ";
+            sql = sql + "('" + sDate + "', '" + sTime + "', '" + name + "', '" + email + "', '" + mobile + "')";
+            database.ExecuteNonQuery(sql);
+            return "SUCCESS";
+        }
+
+        //public IEnumerable<SMS> GetSenderID(string usr)
+        //{
+
+
+        //}
+
+        //private IEnumerable<SMS> ConvertToIEnum(DataTable dataTable)
+        //{
+        //    foreach (DataRow row in dataTable.Rows)
+        //    {
+        //        yield return new SMS
+        //        {
+        //            TankReadingsID = Convert.ToInt32(row["TRReadingsID"]),
+        //            TankID = Convert.ToInt32(row["TankID"]),
+        //            ReadingDateTime = Convert.ToDateTime(row["ReadingDateTime"]),
+        //            ReadingFeet = Convert.ToInt32(row["ReadingFeet"]),
+        //            ReadingInches = Convert.ToInt32(row["ReadingInches"]),
+        //            MaterialNumber = row["MaterialNumber"].ToString(),
+        //            EnteredBy = row["EnteredBy"].ToString(),
+        //            ReadingPounds = Convert.ToDecimal(row["ReadingPounds"]),
+        //            MaterialID = Convert.ToInt32(row["MaterialID"]),
+        //            Submitted = Convert.ToBoolean(row["Submitted"]),
+        //        };
+        //    }
+
+        //}
+
+        public int ShortUrls_Count(string longurl, string userid)
+        {
+            return Convert.ToInt16(database.GetScalarValue("select count(*) from short_urls where long_url='" + longurl + "' and userid='" + userid + "'"));
+        }
+
+        public string CheckValidUser(string UID, string PWD)
+        {
+            bool b = false;
+            string sql = "Select usertype from customer where Username='" + UID + "' and Pwd='" + PWD + "' AND expiry >=  getdate() ";
+            string s = Convert.ToString(database.GetScalarValue(sql));
+            return s;
+            //if (s != "") b = true;
+            //return b;
+        }
+        public string GenerateUserID()
+        {
+            return Convert.ToString(database.GetScalarValue(@"select 'RCS' + RIGHT(YEAR(GETDATE()),2) + RIGHT('00000' + CONVERT(VARCHAR,(ISNULL(max(substring(username,6,5)),0) + 1)),5)  
+                                                                FROM CUSTOMER where left(username, 5) = 'RCS' + RIGHT(YEAR(GETDATE()), 2) "));
+        }
+        public string GeneratePWD()
+        {
+            return Convert.ToString(database.GetScalarValue("select STUFF(Replace(LEFT(NewId(),12),'-','_'),5,1,'$')"));
+            //   return System.Web.Security.Membership.GeneratePassword(12, 1);
+        }
+        public void SaveShortURL(string UserID, string LongURL, string UserHostAddress, string ShortURL, string mobTrk, string mainurl, string domain, string name = "", string richmediaurl = "")
+        {
+            string sql = "Insert into Short_urls (long_url, segment,added,ip,num_of_clicks,userid,mobtrack,mainurl,domainname,urlname,richmediaurl) values " +
+                "('" + LongURL + "','" + ShortURL + "',getdate(),'" + UserHostAddress + "','0','" + UserID + "','" + mobTrk + "','" + (mainurl == "Y" ? "1" : "0") + "','" + domain + "','" + name + "','" + (richmediaurl == "Y" ? "1" : "0") + "')";
+            database.ExecuteNonQuery(sql);
+        }
+
+        public void SaveAndSendVerificationLink(string usr, string mobile, string seg, string domain)
+        {
+            string msg = Convert.ToString(database.GetScalarValue("select PWDChangeSMS from settings"));
+            msg = msg.Replace("#LINK", domain + seg);
+
+            //SendSMSthroughAPI(mobile, msg, "MIM2000002");
+            SendSMSthroughAPI_forOTP(mobile, msg, usr);
+
+            // string msg = "Click the link to Verify your identity for changing the password in Linkext.io - " + domain + seg + " The link is valid only for 5 minutes.";
+            string sql = "declare @sender varchar(100) declare @uid varchar(20) declare @peid varchar(50) select top 1 @uid=username, @sender=senderid, @peid=peid from customer where usertype='SYSADMIN' " +
+                "Insert into EMIMPANEL.dbo.VerifyLink (userid,mobileno,segment,sendtime,validhitrecdtime,domain) " +
+                "values ('" + usr + "','" + mobile + "','" + seg + "',getdate(),dateadd(MINUTE,5,getdate()),'" + domain + "' ) ; ";
+
+            //" Insert into MSGTRAN (PROVIDER, SMPPACCOUNTID, PROFILEID, MSGTEXT, TOMOBILE, SENDERID, CREATEDAT, peid,datacode) " +
+            //"values ('BSNL','301',@uid,'" + msg + "','" + mobile + "',@sender,getdate(),@peid,'Default')";
+            database.ExecuteNonQuery(sql);
+        }
+
+        public bool GetVerifyStatus(string usr, string seg)
+        {
+            string sql = "Select count(*) from EMIMPANEL.dbo.VerifyLink where userid='" + usr + "' and segment='" + seg + "' and getdate() <= validhitrecdtime and hitrecdtime is not null and hitrecdtime <= validhitrecdtime ";
+            if (Convert.ToInt16(database.GetScalarValue(sql)) > 0) return true; else return false;
+        }
+
+        public void ChangeUserPassword(string usr, string pwd)
+        {
+            string sql = "declare @pwd varchar(20) select @pwd=pwd from customer where username='" + usr + "' ; " +
+                " Insert into pwdchnglog (userid, oldpwd, newpwd) values ('" + usr + "',@pwd,'" + pwd + "') ; " +
+                " update customer set pwd='" + pwd + "' where username='" + usr + "' ";
+            database.ExecuteNonQuery(sql);
+        }
+
+        public bool CheckShortURLDuplicate(string segment, string domain)
+        {
+            int c = Convert.ToInt16(database.GetScalarValue("select count (*) from short_urls where segment = '" + segment + "' and domainname='" + domain + "' "));
+            return (c > 0 ? true : false);
+        }
+
+        public string NewShortURLfromSQL(string domain)
+        {
+            string sql = @"declare @i integer declare @s varchar(6) set @i=0
+                while @i < 30
+                begin select @s = left(NEWID(), 6) if not exists(select segment from short_urls where segment = @s and domainname='" + domain + @"') break else begin set @s = '' set @i = @i + 1 end end
+                select @s";
+            return Convert.ToString(database.GetScalarValue(sql));
+        }
+        private void IsCountryCodeNotExistSMPPForUser(string user, string ForeignAccountId, string CountryCode)
+        {
+            string sql = string.Format("IF NOT EXISTS(SELECT * FROM smppaccountuserid WHERE userid ='{0}') Insert into smppaccountuserid (userid,smppaccountid,countrycode,active) Values('{1}','{2}','{3}',1)", user, user, ForeignAccountId, CountryCode);
+            database.ExecuteNonQuery(sql);
+        }
+
+        public string SaveCustomer(string Sender, string Name, string CompName, string Website, string Mob1, string usertype, string Email, string Expiry, string DLT, string SMSType, string ActType, string Permission, string CountryCode, string user, string LOGINusertype, string peid, string mode, string editACID, string pwd, string empcode = "0", bool IsWABAAcive = false, string AccID = "", string AuthKey = "", string RCSType = "", string ApiUrl = "")
+        {
+            DataTable dt = database.GetDataTable("select * from settings");
+            string ForeignAccountId = Convert.ToString(database.GetScalarValue("select defaultSMPPacID from tblCountry where counryCode='" + CountryCode + "'"));
+            if (mode == "ADD")
+            {
+                string UserID = GenerateUserID();
+                string PWD = pwd;// pw GeneratePWD().Replace('#', '0').Replace('|', '_').Replace(':', '_').Replace('<', '_').Replace('>', '_').Replace('?', '_').Replace('+', '_').Replace('%', '_').Replace('&', '_').Replace('/', '_').Replace(@"\", "_");
+                                 // DataTable dt = database.GetDataTable("select * from settings");
+                DataTable dtc = database.GetDataTable("select * from Customer where username='" + user + "'");
+                string b, n, s, c, o, u, d;
+
+                b = dt.Rows[0]["balance"].ToString();
+
+                if (LOGINusertype == "ADMIN")
+                {
+                    n = dtc.Rows[0]["rate_normalsms"].ToString();
+                    s = dtc.Rows[0]["rate_smartsms"].ToString();
+                    c = dtc.Rows[0]["rate_campaign"].ToString();
+                    o = dtc.Rows[0]["rate_otp"].ToString();
+                    d = dtc.Rows[0]["dltcharge"].ToString();
+                    u = dtc.Rows[0]["urlrate"].ToString();
+                    DLT = dtc.Rows[0]["DLTNO"].ToString();
+                }
+                else
+                {
+                    n = dt.Rows[0]["NORMALSMSRATE"].ToString();
+                    s = dt.Rows[0]["SMARTSMSRATE"].ToString();
+                    c = dt.Rows[0]["CAMPAIGNSMSRATE"].ToString();
+                    o = dt.Rows[0]["OTPSMSRATE"].ToString();
+                    d = dt.Rows[0]["DLTDeduction4refund"].ToString();
+                    u = dt.Rows[0]["urlrate"].ToString();
+                }
+
+                if (CountryCode != "91")
+                {
+                    IsCountryCodeNotExistSMPPForUser(UserID, ForeignAccountId, CountryCode);
+                }
+
+                string sql = "Insert into Customer (USERNAME,PWD,DLTNO, SENDERID,SMSTYPE,FULLNAME,ACCOUNTTYPE,PERMISSION,COMPNAME,WEBSITE,MOBILE1,USERTYPE," +
+                    "EMAIL,COUNTRYCODE,ACCOUNTCREATEDON,EXPIRY,ACTIVE, balance, rate_normalsms, rate_smartsms, rate_campaign, rate_otp, createdby, noofurl, " +
+                    " noofhit, urlrate, dltcharge, domainname,peid,defaultCountry,empcode,WABARCS,RCSACCID,RCSAUTHKEY,RCSURL) " +
+                " Values ('" + UserID + "','" + PWD + "','" + DLT + "','" + Sender + "'," +
+                "'" + SMSType + "'," +
+                "'" + Name + "'," +
+                "'" + ActType + "'," +
+                "'" + Permission + "'," +
+                "'" + CompName + "'," +
+                "'" + Website + "'," +
+                "'" + Mob1 + "'," +
+                "'" + usertype + "'," +
+                "'" + Email + "'," +
+                "'" + CountryCode + "'," +
+                "GETDATE()," +
+                "'" + Expiry + "'," +
+                "'1','" + b + "','" + n + "','" + s + "','" + c + "','" + o + "','" + user + "','0','0','" + u + "','" + d + "','https://m1m.io/','" + peid + "','" + CountryCode + "','" + empcode + "','" + IsWABAAcive + "','" + AccID + "','" + AuthKey + "','" + ApiUrl + "') ; INSERT INTO senderidmast (userid,senderid,countrycode) VALUES ('" + UserID + "','" + Sender + "','" + CountryCode + "')";
+                database.ExecuteNonQuery(sql);
+                sql = "Insert into Dashboard (userid) values ('" + UserID + "')";
+                sql += " Insert into smsrateaspercountry (USERNAME,countrycode, rate_normalsms,rate_campaign, rate_smartsms, rate_otp, urlrate, dltcharge,insertdate) values ('" + UserID + "','" + CountryCode + "','" + n + "','" + c + "','" + s + "','" + o + "','" + u + "','" + d + "',GETDATE())";
+                database.ExecuteNonQuery(sql);
+                string msg = "Account created for MIM. USER ID: " + UserID + " PASSWORD: " + PWD;
+                string sender = Convert.ToString(database.GetScalarValue("Select senderid from customer where username='" + user + "'"));
+                string peidAdmin = Convert.ToString(database.GetScalarValue("Select peid from customer where username='" + user + "'"));
+                /* AN
+                Helper.dbmain.ExecuteNonQuery("Insert into MSGTRAN (PROVIDER,SMPPACCOUNTID,PROFILEID,MSGTEXT,TOMOBILE,SENDERID,CREATEDAT,peid,DataCode) " +
+                    "values ('VCon','302','" + user + "',N'" + msg + "','" + Mob1 + "','" + sender + "',getdate(),'" + peidAdmin + "','Default')");
+
+                string mailmsg = "Account Created for MIM Panel. \n \n User ID: " + UserID + "  \n Password: " + PWD;
+                string re = SendEmail(Email, "Account Created for MIM Panel", mailmsg,
+                   "noreply@textiyapa.com", "IP#396395", "smtpout.secureserver.net");
+                   */
+                //sendEmail(UserID, PWD);
+
+                return "Account Successfully Created (" + UserID + ")";
+            }
+            else
+            {
+                if (CountryCode != "91")
+                {
+                    IsCountryCodeNotExistSMPPForUser(editACID, ForeignAccountId, CountryCode);
+                }
+                string sql = "update Customer set DLTNO='" + DLT + "', SMSTYPE=0,FULLNAME='" + Name + "',ACCOUNTTYPE='" + ActType + "'," +
+                    "PERMISSION='" + Permission + "',COMPNAME='" + CompName + "',WEBSITE='" + Website + "',MOBILE1='" + Mob1 + "',USERTYPE='" + usertype + "', " +
+                    "EMAIL='" + Email + "',EXPIRY='" + Expiry + "',peid='" + peid + "',defaultCountry='" + CountryCode + "',pwd='" + pwd + "',apikey='" + pwd + "',COUNTRYCODE='" + CountryCode + "' " +
+                    ",WABARCS='" + IsWABAAcive + "',RCSACCID='" + AccID + "',RCSAUTHKEY='" + AuthKey + "',RCSURL='" + ApiUrl + "' where username = '" + editACID + "' ;";
+                sql += string.Format("IF NOT EXISTS(SELECT * FROM senderidmast where userid='{0}' and senderid='{1}' and countrycode='" + CountryCode + "')" +
+                   " INSERT INTO senderidmast (userid,senderid,countrycode) VALUES ('{2}','{3}','" + CountryCode + "') ; " +
+                   "update Customer set senderid='{4}' where username='{5}'", editACID, Sender, editACID, Sender, Sender, editACID);
+                database.ExecuteNonQuery(sql);
+                return "Account Successfully Updated";
+            }
+        }
+        public string SaveCustomer(string Sender, string Name, string CompName, string Website, string Mob1, string usertype, string Email, string Expiry, string DLT, string SMSType, string ActType, string Permission, string CountryCode, string user, string LOGINusertype, string ApiUrl)
+        {
+            string UserID = GenerateUserID();
+            string PWD = GeneratePWD();
+            //string PWD = GeneratePWD().Replace('#', '0').Replace('|', '_').Replace(':', '_').Replace('<', '_').Replace('>', '_').Replace('?', '_').Replace('%', '_').Replace('&', '_').Replace('/', '_').Replace(@"\", "_");
+            DataTable dt = database.GetDataTable("select * from settings");
+            DataTable dtc = database.GetDataTable("select * from Customer where username='" + user + "'");
+            string b, n, s, c, o, u, d;
+
+            b = dt.Rows[0]["balance"].ToString();
+
+            if (LOGINusertype == "ADMIN")
+            {
+                n = dtc.Rows[0]["rate_normalsms"].ToString();
+                s = dtc.Rows[0]["rate_smartsms"].ToString();
+                c = dtc.Rows[0]["rate_campaign"].ToString();
+                o = dtc.Rows[0]["rate_otp"].ToString();
+                d = dtc.Rows[0]["dltcharge"].ToString();
+                u = dtc.Rows[0]["urlrate"].ToString();
+                DLT = dtc.Rows[0]["DLTNO"].ToString();
+            }
+            else
+            {
+                n = dt.Rows[0]["NORMALSMSRATE"].ToString();
+                s = dt.Rows[0]["SMARTSMSRATE"].ToString();
+                c = dt.Rows[0]["CAMPAIGNSMSRATE"].ToString();
+                o = dt.Rows[0]["OTPSMSRATE"].ToString();
+                d = dt.Rows[0]["DLTDeduction4refund"].ToString();
+                u = dt.Rows[0]["urlrate"].ToString();
+            }
+
+            string sql = "Insert into Customer (USERNAME,PWD,DLTNO, SENDERID,SMSTYPE,FULLNAME,ACCOUNTTYPE,PERMISSION,COMPNAME,WEBSITE,MOBILE1,USERTYPE,EMAIL,COUNTRYCODE,defaultCountry,ACCOUNTCREATEDON,EXPIRY,ACTIVE, balance, rate_normalsms, rate_smartsms, rate_campaign, rate_otp, createdby, noofurl, noofhit, urlrate, dltcharge, domainname,RCSURL) " +
+            " Values ('" + UserID + "','" + PWD + "','" + DLT + "','" + Sender + "'," +
+            "'" + SMSType + "'," +
+            "'" + Name + "'," +
+            "'" + ActType + "'," +
+            "'" + Permission + "'," +
+            "'" + CompName + "'," +
+            "'" + Website + "'," +
+            "'" + Mob1 + "'," +
+            "'" + usertype + "'," +
+            "'" + Email + "'," +
+            "'" + CountryCode + "'," +
+            "'" + CountryCode + "'," +
+            "GETDATE()," +
+            "'" + Expiry + "'," +
+            "'1','" + b + "','" + n + "','" + s + "','" + c + "','" + o + "','" + user + "','0','0','" + u + "','" + d + "','https://m1m.io/','" + ApiUrl + "') ; INSERT INTO senderidmast (userid,senderid,countrycode) VALUES ('" + UserID + "','" + Sender + "','" + CountryCode + "')";
+            database.ExecuteNonQuery(sql);
+            sql = "Insert into Dashboard (userid) values ('" + UserID + "')";
+            sql += " Insert into smsrateaspercountry (USERNAME,countrycode, rate_normalsms,rate_campaign, rate_smartsms, rate_otp, urlrate, dltcharge,insertdate) values ('" + UserID + "','" + CountryCode + "','" + n + "','" + c + "','" + s + "','" + o + "','" + u + "','" + d + "',GETDATE())";
+
+            database.ExecuteNonQuery(sql);
+            string msg = "Account created for MIM. USER ID: " + UserID + " PASSWORD: " + PWD;
+            string sender = Convert.ToString(database.GetScalarValue("Select senderid from customer where username='" + user + "'"));
+            string peidAdmin = Convert.ToString(database.GetScalarValue("Select peid from customer where username='" + user + "'"));
+            Helper.dbmain.ExecuteNonQuery("Insert into MSGTRAN (PROVIDER,SMPPACCOUNTID,PROFILEID,MSGTEXT,TOMOBILE,SENDERID,CREATEDAT,peid,DataCode) " +
+                "values ('BSNL','301','" + user + "','" + msg + "','" + Mob1 + "','" + sender + "',getdate(),'" + peidAdmin + "','Default')");
+
+            string mailmsg = "Account Created for RCS Panel. \n \n User ID: " + UserID + "  \n Password: " + PWD;
+            string re = SendEmail(Email, "Account Created for MIM Panel", mailmsg,
+                "noreply@textiyapa.com", "IP#396395", "smtpout.secureserver.net");
+            //sendEmail(UserID, PWD);
+            return "Account Successfully Created (" + UserID + ")";
+
+        }
+        public void sendEmail(string u, string p)
+        {
+            //string fn = Server.MapPath("~/img/logo.png");
+            try
+            {
+
+                MailMessage message = new MailMessage();
+                message.From = new MailAddress("noreply@textiyapa.com");
+
+                //message.To.Add(new MailAddress("software.in2010@gmail.com"));
+                //message.CC.Add("rajan8815@gmail.com");
+
+
+                message.To.Add(new MailAddress("software.in2010@gmail.com"));
+                message.CC.Add("dsng25@gmail.com");
+                //message.CC.Add("anirudh@myinboxmedia.com");
+                //message.CC.Add("support@myinboxmedia.com");
+
+                message.Subject = "Account Created for MIM Panel";
+                message.Body = "Account Created for MIM Panel. User ID: " + u + " Password: " + p;
+
+                //Attachment item = new Attachment(fn);
+                //message.Attachments.Add(item);
+                SmtpClient client = new SmtpClient();
+                client.Send(message);
+            }
+            catch (Exception ex)
+            {
+                //ErrLog("err in mail - " + ex.Message + ex.StackTrace);
+            }
+        }
+
+        public string SendEmail(string toAddress, string subject, string body, string MailFrom, string Pwd, string Host)
+        {
+            string result = "Message Sent Successfully..!!";
+            string senderID = MailFrom; // "info@emim.in";
+            string senderPassword = Pwd; // "info";
+            try
+            {
+                //Host = "mymail2889.com",
+
+                SmtpClient smtp = new SmtpClient
+                {
+                    Host = Host,
+                    Port = 25,
+                    DeliveryMethod = SmtpDeliveryMethod.Network,
+                    Credentials = new System.Net.NetworkCredential(senderID, senderPassword),
+                    Timeout = 30000,
+                };
+
+                MailMessage message = new MailMessage(senderID, toAddress, subject, body);
+                //message.CC.Add("dsng25@gmail.com");
+                message.CC.Add("anirudh@myinboxmedia.com");
+                // message.CC.Add("support@myinboxmedia.com");
+
+                //Attachment item = new Attachment(fn);
+                //message.Attachments.Add(item);
+                //smtp.EnableSsl = false;
+                //smtp.UseDefaultCredentials = false;
+                smtp.Send(message);
+            }
+            catch (Exception ex)
+            {
+                result = "Error sending email.!!! " + ex.Message;
+                //ErrLog("error on sending email - " + ex.Message + " -- " + ex.StackTrace);
+            }
+            return result;
+        }
+
+        public DataTable GetCustomers(string f, string t, string usertype, string user, string filter = "user")
+        {
+            string sql = "";
+            string dlt = "";
+
+            if (usertype == "ADMIN")
+            {
+                dlt = Convert.ToString(database.GetScalarValue("Select Top 1 dltno from customer where username='" + user + "'"));
+
+                sql = "select row_number() over (Order by AccountCreatedOn desc) as Sln,CompName,Fullname,username,SenderID,Mobile1 as mobile,Email, Balance,  CreatedBy, case when active=1 then 'active' else 'blocked' end as status,pwd from customer where dltno = '" + dlt + "' and AccountCreatedOn between '" + f + "' and '" + t + "' order by AccountCreatedOn  desc";
+            }
+            if (usertype == "SYSADMIN")
+            {
+                //dlt = Convert.ToString(database.GetScalarValue("Select Top 1 dltno from customer where username='" + user + "'"));
+                sql = "select row_number() over (Order by AccountCreatedOn desc) as Sln,CompName,Fullname,username,SenderID,Mobile1 as mobile,Email, Balance,  CreatedBy, case when active=1 then 'active' else 'blocked' end as status,pwd from customer where AccountCreatedOn between '" + f + "' and '" + t + "' and USERTYPE='" + filter + "' order by AccountCreatedOn  desc";
+            }
+
+            DataTable dt = database.GetDataTable(sql);
+            return dt;
+        }
+        public DataTable GetSenderList(string usertype, string user)
+        {
+            string sql = "";
+            string dlt = "";
+            if (usertype == "ADMIN")
+            {
+                dlt = Convert.ToString(database.GetScalarValue("Select Top 1 dltno from customer where username='" + user + "'"));
+
+                sql = "select s.userid,s.senderid,countrycode from customer c with(nolock) inner join senderidmast s ON c.username=s.userid where dltno = '" + dlt + "' order by 3,2";
+            }
+            else if (usertype == "SYSADMIN" && user != "20200125")
+            {
+                sql = "select userid,SenderID,countrycode from senderidmast where userid='" + user + "' order by 3,2";
+            }
+            else if (usertype == "SYSADMIN")
+                sql = "select userid,SenderID,countrycode from senderidmast order by 3,2";
+
+            DataTable dt = database.GetDataTable(sql);
+            return dt;
+        }
+
+
+
+        public DataTable GetCustomersWithBalance(string user = "", string dlt = "", string usertype = "")
+        {
+            string sql = "select row_number() over (Order by AccountCreatedOn desc) as Sln,CompName,fullname,username,SenderID,Mobile1 as mobile, Email, Balance, CreatedBy, rate_normalsms,rate_smartsms,rate_campaign,rate_otp,urlrate,dltcharge from customer ";
+            if (usertype == "ADMIN")
+                if (user != "") sql = sql + " where username <> '" + user + "' and DLTNO='" + dlt + "' ";
+            DataTable dt = database.GetDataTable(sql);
+            return dt;
+        }
+
+        public string SaveWABARCSBalance(string un, string bal, string cd, string user, string usertype, string remarks)
+        {
+            string sql = "Insert into WABalCrDr (username,trantype,balance,trandate,remarks) " +
+            " Values ('" + un + "'," +
+            "'" + cd + "'," +
+            "'" + bal + "'," +
+            "getdate()," +
+            "'" + remarks + "') ;Update customer set WABARCSbal=0 Where WABARCSbal is null and username = '" + un + "' " +
+                           ";Update customer set WABARCSbal = WABARCSbal " + (cd == "C" ? " + " : " - ") + bal.ToString() + " Where username = '" + un + "' ";
+            database.ExecuteNonQuery(sql);
+
+            return "WABA RCS balance Successfully Updated.";
+        }
+
+        public string SaveClickCrDrBalance(string un, string bal, string cd, string user, string usertype, string remarks)
+        {
+            string sql = "Insert into userBalCrDr (username,trantype,balance,trandate,tranby,remarks,clickrecharge) " +
+            " Values ('" + un + "'," +
+            "'" + cd + "'," +
+            "'" + bal + "'," +
+            "getdate()," +
+            "'" + user + "'," +
+            "'" + remarks + "',1) ;Update customer set noofhit=0 Where noofhit is null and username = '" + un + "' " +
+                           ";Update customer set noofhit = noofhit " + (cd == "C" ? " + " : " - ") + bal.ToString() + " Where username = '" + un + "' ";
+            database.ExecuteNonQuery(sql);
+
+            if (usertype == "ADMIN")
+            {
+                sql = "Insert into userBalCrDr (username,trantype,balance ,trandate,tranby,remarks,clickrecharge) " +
+                " Values ('" + user + "'," +
+                "'" + (cd == "C" ? "D" : "C") + "'," +
+                "'" + bal + "'," +
+                "getdate()," +
+                "'" + user + ",'" +
+                 "'" + remarks + "',1);Update customer set noofhit=0 Where noofhit is null and username = '" + user + "' " +
+                 ";Update customer set noofhit = noofhit " + (cd == "C" ? " - " : " + ") + bal.ToString() + " Where username = '" + user + "' ";
+                database.ExecuteNonQuery(sql);
+            }
+            return "Balance Successfully Updated.";
+        }
+
+        public string SaveCrDrBalance(string un, string bal, string cd, string user, string usertype, string remarks)
+        {
+            string sql = "Insert into userBalCrDr (username,trantype,balance ,trandate,tranby,remarks) " +
+            " Values ('" + un + "'," +
+            "'" + cd + "'," +
+            "'" + bal + "'," +
+            "getdate()," +
+            "'" + user + "','" + remarks + "') ; Update customer set rcsbalance = rcsbalance " + (cd == "C" ? " + " : " - ") + bal.ToString() + " Where username = '" + un + "' " +
+            ";";
+            database.ExecuteNonQuery(sql);
+
+            if (usertype == "ADMIN")
+            {
+                sql = "Insert into userBalCrDr (username,trantype,balance ,trandate,tranby,remarks) " +
+                " Values ('" + user + "'," +
+                "'" + (cd == "C" ? "D" : "C") + "'," +
+                "'" + bal + "'," +
+                "getdate()," +
+                "'" + user + "','" + remarks + "') ; Update customer set rcsbalance = rcsbalance " + (cd == "C" ? " - " : " + ") + bal.ToString() + " Where username = '" + user + "'" +
+               ";";
+                database.ExecuteNonQuery(sql);
+            }
+
+            return "Balance Successfully Updated.";
+        }
+
+        public string UpdateSMSPrice(string un, string s1o, string s2o, string s3o, string s4o, string s1n, string s2n, string s3n, string s4n, string s5o, string s5n, string d1o, string d1n, string user)
+        {
+            string sql = "Insert into CustSmsRateChangeLog (username,rate_normalsms,rate_smartsms,rate_campaign,rate_otp,Nrate_normalsms,Nrate_smartsms,Nrate_campaign,Nrate_otp,trandate,tranby, urlrate, urlrateN,DltrateO,DltrateN) " +
+            " Values ('" + un + "','" + s1o + "','" + s2o + "','" + s3o + "','" + s4o + "','" + s1n + "','" + s2n + "','" + s3n + "','" + s4n + "'," +
+            "getdate(),'" + user + "','" + s5o + "','" + s5n + "','" + d1o + "','" + d1n + "') ; Update customer set rate_normalsms='" + s1n + "',rate_smartsms='" + s2n + "',rate_campaign='" + s3n + "',rate_otp='" + s4n + "',urlrate = '" + s5n + "',dltcharge='" + d1n + "' Where username = '" + un + "' ";
+            database.ExecuteNonQuery(sql);
+            return "Rate Successfully Updated.";
+        }
+        public string UpdateURLPrice(string un, string urlrate, string user)
+        {
+            string sql = "Update customer set urlrate='" + urlrate + "' Where username = '" + un + "' ";
+            database.ExecuteNonQuery(sql);
+            return "Rate Successfully Updated.";
+        }
+
+        public DataTable GetDayWiseSMSSummary(string user, string f, string t, string senderId = "", string dltNo = "")
+        {
+            string sql = "";
+            string dlt = "";
+
+            sql = @"select smsdate as smsDate1,convert(varchar,smsdate,106) SMSDATE,userid,senderid,sum(submitted) Submitted,sum(delivered) Delivered,sum(Failed) Failed, sum(Unknown) Unknown from DAYSUMMARY 
+where smsdate between '" + f + "' and '" + t + @"' ";
+
+            if (user != "")
+            {
+                //    dlt = Convert.ToString(database.GetScalarValue("Select Top 1 dltno from customer where username='" + user + "'"));
+                sql = sql + " and userid = '" + user + "' ";
+            }
+            if (user == "" && dltNo != "")
+            {
+                sql = sql + " and userid IN (select username from CUSTOMER where DLTNO='" + dltNo + "' )";
+            }
+            if (senderId != "")
+            {
+                sql = sql + " and senderid = '" + senderId + "' ";
+            }
+            sql = sql + " group by smsdate,userid,senderid order by smsDate1";
+            DataTable dt = database.GetDataTable(sql);
+            return dt;
+        }
+
+        public DataTable GetBalananceLogs(string username, string f, string t)
+        {
+            string sss = "select cast(trandate as date) as trandate,iif(trantype='C',balance,-balance) as balance from userBalCrDr with (nolock) where username='" + username + "' and trandate between '" + f + "' and '" + t + @"' order by trandate ";
+
+            string sql1 = @"SELECT  ROW_NUMBER() OVER(ORDER BY baldate) AS Seq, balance,baldate into #tmp1 from customerBalLog with (nolock)
+                            where userid='" + username + "' and baldate between '" + f + "' and '" + t + @"' order by baldate ";
+
+            string sql2 = @"SELECT  ROW_NUMBER() OVER(ORDER BY baldate) AS Seq, balance,baldate into #tmp2 from customerBalLog with (nolock)
+                            where userid='" + username + "' and baldate between DATEADD(dd,1, '" + f + "') and '" + t + @"' order by baldate ";
+
+            string sql3 = "select cast(t1.baldate as date) as SMSDATE , t1.balance as amount ,(T1.balance - T2.balance) as Expenditure,t2.balance as NetAmount FROM #tmp1 t1 inner join #tmp2 t2 ON  t1.seq = t2.seq ";
+
+            string sql = string.Format("{0}; {1} ; {2}", sql1, sql2, sql3);
+
+            DataTable dt = database.GetDataTable(sql);
+
+            DataTable dtRecharge = database.GetDataTable(sss);
+
+            foreach (DataRow dr in dtRecharge.Rows)
+            {
+                var rowsToUpdate = dt.AsEnumerable().Where(r => r.Field<DateTime>("SMSDATE") == Convert.ToDateTime(dr["trandate"]));
+                foreach (var row in rowsToUpdate)
+                {
+                    row.SetField("amount", Convert.ToDouble(row["amount"]) + (Convert.ToDouble(dr["balance"])));
+                    row.SetField("Expenditure", Convert.ToDouble(row["Expenditure"]) + (Convert.ToDouble(dr["balance"])));
+                }
+                dt.AcceptChanges();
+            }
+
+            return dt;
+        }
+        public DataTable GetDayWiseSMSSummaryDetail(string user, string dat)
+        {
+            string sql = "";
+
+            sql = @"select smsdate as smsDate1,convert(varchar,smsdate,106) SMSDATE,userid,SenderID,Submitted,Delivered,Failed, Unknown from DAYSUMMARY 
+where userid='" + user + "' and smsdate between '" + dat + "' and '" + dat + @"'  ";
+
+            //if (user != "")
+            //{
+            //    //    dlt = Convert.ToString(database.GetScalarValue("Select Top 1 dltno from customer where username='" + user + "'"));
+            //    sql = sql + " and userid = '" + user + "' ";
+            //}
+            sql = sql + " order by senderid ";
+            DataTable dt = database.GetDataTable(sql);
+            return dt;
+        }
+
+        public DataTable GetSMSReport(string f, string t, string usertype, string user)
+        {
+            string sql = "";
+            string dlt = "";
+
+            sql = @"
+
+
+select row_number() over (Order by c.userName ) as Sln,
+                 c.userName,s.SenderID,count(s.id) submitted,
+sum(case when isnull(d.dlvrstatus,'')='Delivered' then 1 else 0 end) as delivered,
+sum(case when isnull(d.dlvrstatus,'')<>'Delivered' AND d.dlvrstatus IS NOT NULL then 1 else 0 end) as failed,
+sum(case when d.dlvrstatus IS NULL then 1 else 0 end) as unknown
+                 from customer c
+                inner
+                 join MSGSUBMITTED s on c.username = s.profileid /* and c.senderid = s.senderid */
+                left join delivery d on s.msgid = d.msgid
+                where s.sentdatetime between '" + f + "' and '" + t + @"' ";
+
+            if (usertype == "ADMIN")
+            {
+                dlt = Convert.ToString(database.GetScalarValue("Select Top 1 dltno from customer where username='" + user + "'"));
+                sql = sql + " and c.dltno = '" + dlt + "' ";
+            }
+
+            sql = sql + " group by c.userName,s.SenderID ";
+            DataTable dt = database.GetDataTable(sql);
+            return dt;
+        }
+
+        public DataTable GetUserSMSReportDetail(string user, string sender, string f, string t)
+        {
+            string sql = "";
+            sql = @"select m.msgid as MessageId, m.tomobile as MobileNo, m.senderid as Sender,msgtext as Message,
+convert(varchar,m.sentdatetime,106) + ' ' + convert(varchar,m.sentdatetime,108) as SentDate,
+convert(varchar,d.dlvrtime,106) + ' ' + convert(varchar,d.dlvrtime,108) as DeliveredDate,
+CASE WHEN d.dlvrstatus is null then 'UNKNOWN' ELSE CASE WHEN d.dlvrstatus='Delivered' then 'DELIVERED' ELSE 'FAILED' END END 
+AS MessageState, d.dlvrtext as RESPONSE FROM MSGSUBMITTED m with (nolock) left join DELIVERY d with (nolock) on m.msgid=d.msgid
+where m.PROFILEID='" + user + "' and m.senderid='" + sender + "' and m.sentdatetime between '" + f + "' and '" + t + "' order by m.sentdatetime ";
+
+            DataTable dt = database.GetDataTable(sql);
+            return dt;
+        }
+
+        public DataTable GetSMSReport_user(string f, string t, string usertype, string user)
+        {
+            string sql = "";
+            string dlt = "";
+
+            sql = string.Format("select row_number() over (Order by s.createdat desc ) as Sln,s.msgid,s.tomobile as mobile,s.senderid, s.msgtext," +
+               "DATEADD(MINUTE,{0} , convert(varchar, s.sentdatetime,106) + ' ' + convert(varchar, s.sentdatetime,108)) as senttime," +
+                "d.DLVRSTATUS + '  ' + convert(varchar, d.DLVRTIME,106) + ' ' + convert(varchar, d.DLVRTIME,108) as dlrstat" +
+                 " from customer c with (nolock) inner join MSGSUBMITTED s with (nolock) on c.username = s.profileid " +
+                "left join delivery d with (nolock) on s.msgid = d.msgid and convert(varchar,s.insertdate,102)=convert(varchar,d.insertdate,102)" +
+                " where s.createdat between '{1}' and '{2}' and s.profileid='{3}'", Helper.Global.addMinutes, f, t, user);
+            //if (usertype == "ADMIN")
+            //{
+            //    dlt = Convert.ToString(database.GetScalarValue("Select Top 1 dltno from customer where username='" + user + "'"));
+            //    sql = sql + " and c.dltno = '" + dlt + "' ";
+            //}
+
+            //sql = sql + " group by c.userName,c.SenderID";
+            DataTable dt = database.GetDataTable(sql);
+            return dt;
+        }
+        public DataTable GetSMSReport_user_newConsolidated(string f, string t, string usertype, string user, string campnm, string sender)
+        {
+            //            string sql = @"select '" + Convert.ToDateTime(f).ToString("dd/MMM/yyyy") + "' as fromdate, '" + Convert.ToDateTime(t).ToString("dd/MMM/yyyy") + @"' as todate, '" + Convert.ToDateTime(f).ToString("dd/MMM/yy") + " TO " + Convert.ToDateTime(t).ToString("dd/MMM/yy") + @"' as submitdate,s.senderid as sender,
+            //count(s.id) submitted,
+            //sum(case when isnull(d.dlvrstatus, '') = 'Delivered' then 1 else 0 end) as delivered,
+            //sum(case when isnull(d.dlvrstatus, '') <> 'Delivered' AND d.dlvrstatus IS NOT NULL then 1 else 0 end) as failed,
+            //sum(case when d.dlvrstatus IS NULL then 1 else 0 end) as unknown, '" + user + @"' as userid
+            //from customer c with(nolock)
+            //inner join MSGSUBMITTED s with(nolock) on c.username = s.profileid ";
+            //            if (campnm != "" && campnm != "0") sql = sql + @" inner join smsfileupload u on s.fileid=u.id ";
+            //            sql = sql + @" left join delivery d with(nolock) on s.msgid = d.msgid 
+            //where c.username = '" + user + @"' and s.sentdatetime between '" + f + @"' and '" + t + @"' ";
+            //            if (campnm != "" && campnm != "0") sql = sql + @" and u.campaignname = '" + campnm + "' ";
+            //            if (sender != "" && sender != "0") sql = sql + " and s.senderid='" + sender + "' ";
+            //            sql = sql + @" group by s.senderid order by s.senderid";
+            //            DataTable dt = database.GetDataTable(sql);
+            //return dt;
+
+            string sql1 = @"select '" + Convert.ToDateTime(f).ToString("dd/MMM/yyyy") + "' as fromdate, '" + Convert.ToDateTime(t).ToString("dd/MMM/yyyy") + @"' as todate, '" + Convert.ToDateTime(f).ToString("dd/MMM/yy") + " TO " + Convert.ToDateTime(t).ToString("dd/MMM/yy") + @"' as submitdate,s.senderid as sender,
+count(s.id) submitted,
+sum(case when isnull(d.dlvrstatus, '') = 'Delivered' then 1 else 0 end) as delivered,
+sum(case when isnull(d.dlvrstatus, '') <> 'Delivered' AND d.dlvrstatus IS NOT NULL then 1 else 0 end) as failed,
+sum(case when d.dlvrstatus IS NULL then 1 else 0 end) as unknown, '" + user + @"' as userid into #tbldlr
+from customer c with(nolock)
+inner join MSGSUBMITTED s with(nolock) on c.username = s.profileid ";
+            if (campnm != "" && campnm != "0") sql1 = sql1 + @" inner join smsfileupload u on s.fileid=u.id ";
+            sql1 = sql1 + @" left join delivery d with(nolock) on s.msgid = d.msgid 
+where c.username = '" + user + @"' and s.sentdatetime between '" + f + @"' and '" + t + @"' ";
+            if (campnm != "" && campnm != "0") sql1 = sql1 + @" and u.campaignname = '" + campnm + "' ";
+            if (sender != "" && sender != "0") sql1 = sql1 + " and s.senderid='" + sender + "' ";
+            sql1 = sql1 + @" group by s.senderid ";
+
+
+            string sql2 = @" Union All select '" + Convert.ToDateTime(f).ToString("dd/MMM/yyyy") + "' as fromdate, '" + Convert.ToDateTime(t).ToString("dd/MMM/yyyy") + @"' as todate, '" + Convert.ToDateTime(f).ToString("dd/MMM/yy") + " TO " + Convert.ToDateTime(t).ToString("dd/MMM/yy") + @"' as submitdate,s.senderid as sender,
+count(s.id) submitted,
+sum(case when isnull(d.dlvrstatus, '') = 'Delivered' then 1 else 0 end) as delivered,
+sum(case when isnull(d.dlvrstatus, '') <> 'Delivered' AND d.dlvrstatus IS NOT NULL then 1 else 0 end) as failed,
+sum(case when d.dlvrstatus IS NULL then 1 else 0 end) as unknown, '" + user + @"' as userid
+from customer c with(nolock)
+inner join MSGSUBMITTED_B418FEB s with(nolock) on c.username = s.profileid ";
+            if (campnm != "" && campnm != "0") sql2 = sql2 + @" inner join smsfileupload u on s.fileid=u.id ";
+            sql2 = sql2 + @" left join delivery_B418FEB d with(nolock) on s.msgid = d.msgid 
+where c.username = '" + user + @"' and s.sentdatetime between '" + f + @"' and '" + t + @"' ";
+            if (campnm != "" && campnm != "0") sql2 = sql2 + @" and u.campaignname = '" + campnm + "' ";
+            if (sender != "" && sender != "0") sql2 = sql2 + " and s.senderid='" + sender + "' ";
+            sql2 = sql2 + @" group by s.senderid ;
+
+            select fromdate,todate,submitdate,sender,sum(submitted)submitted,sum(delivered)delivered,sum(failed)failed ,sum(unknown)unknown,userid
+ from #tbldlr group by fromdate,todate,submitdate, sender,userid  order by sender drop table #tbldlr";
+
+            DataTable dt = database.GetDataTable(sql1 + sql2);
+            return dt;
+        }
+
+        public DataTable GetSMSReport_user_newConsolidatedDETAIL(string f, string t, string sender, string user, string campnm = "")
+        {
+            string str = "";
+            int SHOWMOBILEXXXX = Convert.ToInt16(database.GetScalarValue("Select isnull(showmobilexxxx,0) from customer where username='" + user + "' "));
+            if (SHOWMOBILEXXXX == 1) str = "' ' + left(convert(varchar, m.tomobile), len(convert(varchar, m.tomobile)) - 4) + 'XXXX'";
+            else str = "convert(varchar,m.tomobile)";
+            //' ' + left(convert(varchar, m.tomobile), len(convert(varchar, m.tomobile)) - 4) + 'XXXX'
+            string sql = "";
+            string sql_union = "";
+            if (user == "MIM2101371")
+            {
+                sql = @"select convert(varchar,sentdatetime,102) as SMSdate, m.msgid as MessageId, " + str + @" as MobileNo, m.senderid as Sender,
+convert(varchar,m.sentdatetime,106) + ' ' + convert(varchar,m.sentdatetime,108) as SentDate,
+case when d.dlvrtime is null then '' else convert(varchar,d.dlvrtime,106) + ' ' + convert(varchar,d.dlvrtime,108) end as DeliveredDate,
+Replace(Replace(msgtext,CHAR(10),''),CHAR(13),'') as Message, CASE WHEN d.dlvrstatus is null then 'UNKNOWN' ELSE CASE WHEN d.dlvrstatus='Delivered' then 'DELIVERED' ELSE 'FAILED' END END 
+AS MessageState, isnull(d.dlvrtext,'') as RESPONSE FROM MSGSUBMITTED m with (nolock) ";
+                if (campnm != "" && campnm != "0") sql = sql + @" inner join smsfileupload u with (nolock) on m.fileid=u.id ";
+                sql = sql + @" left join DELIVERY d with (nolock) on m.msgid=d.msgid  
+where m.PROFILEID='" + user + @"' and m.senderid='" + sender + "' and m.sentdatetime between '" + f + @"' and '" + t + @"' ";
+                if (campnm != "" && campnm != "0") sql = sql + @" and u.campaignname = '" + campnm + "' ";
+                sql = sql + @" order by m.sentdatetime";
+
+                sql_union = @" union All select convert(varchar,sentdatetime,102) as SMSdate, m.msgid as MessageId, " + str + @" as MobileNo, m.senderid as Sender,
+convert(varchar,m.sentdatetime,106) + ' ' + convert(varchar,m.sentdatetime,108) as SentDate,
+case when d.dlvrtime is null then '' else convert(varchar,d.dlvrtime,106) + ' ' + convert(varchar,d.dlvrtime,108) end as DeliveredDate,
+Replace(Replace(msgtext,CHAR(10),''),CHAR(13),'') as Message, CASE WHEN d.dlvrstatus is null then 'UNKNOWN' ELSE CASE WHEN d.dlvrstatus='Delivered' then 'DELIVERED' ELSE 'FAILED' END END 
+AS MessageState, isnull(d.dlvrtext,'') as RESPONSE FROM MSGSUBMITTED_B418FEB m with (nolock) ";
+                if (campnm != "" && campnm != "0") sql_union = sql_union + @" inner join smsfileupload u with (nolock) on m.fileid=u.id ";
+                sql_union = sql_union + @" left join DELIVERY_B418FEB d with (nolock) on m.msgid=d.msgid  
+where m.PROFILEID='" + user + @"' and m.senderid='" + sender + "' and m.sentdatetime between '" + f + @"' and '" + t + @"' ";
+                if (campnm != "" && campnm != "0") sql_union = sql_union + @" and u.campaignname = '" + campnm + "' ";
+                sql_union = sql_union + @" order by m.sentdatetime ";
+            }
+            else
+            {
+
+                sql = @"select convert(varchar,sentdatetime,102) as SMSdate, m.msgid as MessageId, " + str + @" as MobileNo, m.senderid as Sender,
+Convert(varchar,DATEADD(MINUTE," + Helper.Global.addMinutes + @",m.sentdatetime),120) as SentDate,
+case when d.insertdate is null then '' else Convert(varchar,DATEADD(MINUTE," + Helper.Global.addMinutes + @",d.insertdate),120) end as DeliveredDate,
+Replace(Replace(isnull(smstext,msgtext),CHAR(10),''),CHAR(13),'') as Message, CASE WHEN d.dlvrstatus is null then 'UNKNOWN' ELSE CASE WHEN d.dlvrstatus='Delivered' then 'DELIVERED' ELSE 'FAILED' END END 
+AS MessageState, isnull(d.dlvrtext,'') as RESPONSE FROM MSGSUBMITTED m with (nolock) ";
+                if (campnm != "" && campnm != "0") sql = sql + @" inner join smsfileupload u with (nolock) on m.fileid=u.id ";
+                sql = sql + @" left join DELIVERY d with (nolock) on m.msgid=d.msgid  
+where m.PROFILEID='" + user + @"' and m.senderid='" + sender + "' and m.sentdatetime between '" + f + @"' and '" + t + @"' ";
+                if (campnm != "" && campnm != "0") sql = sql + @" and u.campaignname = '" + campnm + "' ";
+                sql = sql + @" ";
+
+                sql_union = @" union All select convert(varchar,sentdatetime,102) as SMSdate, m.msgid as MessageId, " + str + @" as MobileNo, m.senderid as Sender,
+Convert(varchar,DATEADD(MINUTE," + Helper.Global.addMinutes + @",m.sentdatetime),120) as SentDate,
+case when d.insertdate is null then '' else Convert(varchar,DATEADD(MINUTE," + Helper.Global.addMinutes + @",d.insertdate),120) end as DeliveredDate,
+Replace(Replace(isnull(smstext,msgtext),CHAR(10),''),CHAR(13),'') as Message, CASE WHEN d.dlvrstatus is null then 'UNKNOWN' ELSE CASE WHEN d.dlvrstatus='Delivered' then 'DELIVERED' ELSE 'FAILED' END END 
+AS MessageState, isnull(d.dlvrtext,'') as RESPONSE FROM MSGSUBMITTED_B418FEB m with (nolock) ";
+                if (campnm != "" && campnm != "0") sql_union = sql_union + @" inner join smsfileupload u with (nolock) on m.fileid=u.id ";
+                sql_union = sql_union + @" left join DELIVERY_B418FEB d with (nolock) on m.msgid=d.msgid  
+where m.PROFILEID='" + user + @"' and m.senderid='" + sender + "' and m.sentdatetime between '" + f + @"' and '" + t + @"' ";
+                if (campnm != "" && campnm != "0") sql_union = sql_union + @" and u.campaignname = '" + campnm + "' ";
+                sql_union = sql_union + @" order by SMSdate";
+            }
+
+            DataTable dt = database.GetDataTable(sql + sql_union);
+            return dt;
+        }
+
+        public DataTable GetSMSReport_user_new(string f, string t, string usertype, string user, string campnm = "")
+        {
+            string sql = "";
+            sql = @"select '1' as sr,'1' AS SL,'' as submitdate,'API' as reqsrc,'' as filenm,'' as sender,
+count(s.id) submitted,
+sum(case when isnull(d.dlvrstatus, '') = 'Delivered' then 1 else 0 end) as delivered,
+sum(case when isnull(d.dlvrstatus, '') <> 'Delivered' AND d.dlvrstatus IS NOT NULL then 1 else 0 end) as failed,
+sum(case when d.dlvrstatus IS NULL then 1 else 0 end) as unknown, '' as msg,1 as fileid, '" + user + @"' as userid
+from customer c with(nolock)
+inner join MSGSUBMITTED s with(nolock) on c.username = s.profileid
+left join delivery d with(nolock) on s.msgid = d.msgid and convert(varchar,s.insertdate,102)=convert(varchar,d.insertdate,102)
+where c.username = '" + user + @"' and s.sentdatetime between '" + f + @"' and '" + t + @"' and s.FILEID = '1'
+union all
+select '2' as sr,'1' AS SL,'' as submitdate,'ENTRY' as reqsrc,'' as filenm,'' as sender,
+count(s.id) submitted,
+sum(case when isnull(d.dlvrstatus, '') = 'Delivered' then 1 else 0 end) as delivered,
+sum(case when isnull(d.dlvrstatus, '') <> 'Delivered' AND d.dlvrstatus IS NOT NULL then 1 else 0 end) as failed,
+sum(case when d.dlvrstatus IS NULL then 1 else 0 end) as unknown, '' as msg,0 as fileid,'" + user + @"' as userid
+from customer c with(nolock)
+inner join MSGSUBMITTED s with(nolock) on c.username = s.profileid
+left join delivery d with(nolock) on s.msgid = d.msgid and convert(varchar,s.insertdate,102)=convert(varchar,d.insertdate,102)
+LEFT JOIN SMSFILEUPLOAD SS with(nolock) on ss.id = s.FILEID AND s.profileid = ss.USERID
+where c.username ='" + user + @"' and s.sentdatetime between '" + f + @"' and '" + t + @"' and SS.campaignname='Manual' AND isnull(SS.FILENM,'')=''
+UNION ALL
+select '2' as sr,'1' AS SL, Convert(varchar,DATEADD(MINUTE," + Helper.Global.addMinutes + @",convert(varchar,f.UPLOADTIME,106) + ' ' + convert(varchar,f.UPLOADTIME,108)),120) as submitdate,'FILE' as reqsrc,f.FILENM as filenm,f.senderid as sender,
+count(s.id) submitted,
+sum(case when isnull(d.dlvrstatus, '') = 'Delivered' then 1 else 0 end) as delivered,
+sum(case when isnull(d.dlvrstatus, '') <> 'Delivered' AND d.dlvrstatus IS NOT NULL then 1 else 0 end) as failed,
+sum(case when d.dlvrstatus IS NULL then 1 else 0 end) as unknown, left(s.smsTEXT, 2) as msg,f.id as fileid, '" + user + @"' as userid
+from customer c with(nolock)
+INNER JOIN SMSFILEUPLOAD f on c.username = f.USERID
+inner join MSGSUBMITTED s with(nolock) on c.username = s.profileid and s.FILEID = f.ID
+left join delivery d with(nolock) on s.msgid = d.msgid and convert(varchar,s.insertdate,102)=convert(varchar,d.insertdate,102)
+where c.username  ='" + user + @"' and s.sentdatetime between '" + f + @"' and '" + t + @"' and s.FILEID > 1 AND f.campaignname <> 'Manual' ";
+            if (campnm != "" && campnm != "0") sql = sql + @" and f.campaignname = '" + campnm + "' ";
+            sql = sql + @" group by f.UPLOADTIME,f.FILENM,f.senderid,left(s.smsTEXT, 2),f.id
+order by sr,sl,submitdate";
+            DataTable dt = database.GetDataTable(sql);
+
+            var rows = dt.Select("submitted = 0");
+            foreach (var row in rows)
+                row.Delete();
+            dt.AcceptChanges();
+            return dt;
+        }
+
+        public DataTable GetSMSReportDetail_user_new(string userid, string fileid, string sender, string f, string t, string reqsrc = "")
+        {
+            string sql = "";
+            string str = "";
+            string str2 = "convert(varchar,m.tomobile)";
+            int SHOWMOBILEXXXX = Convert.ToInt16(database.GetScalarValue("Select isnull(showmobilexxxx,0) from customer where username='" + userid + "' "));
+            if (SHOWMOBILEXXXX == 1) str = "' ' + left(convert(varchar, m.tomobile), len(convert(varchar, m.tomobile)) - 4) + 'XXXX'";
+            else str = "convert(varchar,m.tomobile)";
+            if (reqsrc.ToUpper() == "ENTRY") // entry msg
+            {
+                //' ' + left(convert(varchar,m.tomobile),len(convert(varchar,m.tomobile))-4) + 'XXXX'
+                sql = @"select m.msgid as MessageId, " + str + @" as MobileNo, m.senderid as Sender,
+                DATEADD(MINUTE," + Helper.Global.addMinutes + @",convert(varchar,m.sentdatetime,106) + ' ' + convert(varchar,m.sentdatetime,108)) as SentDate,
+                DATEADD(MINUTE," + Helper.Global.addMinutes + @",convert(varchar,d.insertdate,106) + ' ' + convert(varchar,d.insertdate,108)) as DeliveredDate,msgtext as Message,
+                CASE WHEN d.dlvrstatus is null then 'UNKNOWN' ELSE CASE WHEN d.dlvrstatus='Delivered' then 'DELIVERED' ELSE 'FAILED' END END 
+                AS MessageState, d.dlvrtext as RESPONSE FROM MSGSUBMITTED m with (nolock)
+                left join DELIVERY d with (nolock) on m.msgid=d.msgid and convert(varchar,m.insertdate,102)=convert(varchar,d.insertdate,102) 
+                inner join SMSFILEUPLOAD u with (nolock) on u.id = m.fileid AND u.USERID=m.PROFILEID
+                where m.PROFILEID='" + userid + "' /* and m.senderid='" + sender + "' */ and m.sentdatetime between '" + f + "' and '" + t + "' and isnull(u.campaignname,'')='Manual' AND isnull(u.FILENM,'')='' order by m.sentdatetime ";
+
+            }
+            else if (fileid == "1") // api msg
+            {
+                //' ' + left(convert(varchar,m.tomobile),len(convert(varchar,m.tomobile))-4) + 'XXXX'
+                sql = @"select m.msgid as MessageId, " + str2 + @" as MobileNo, m.senderid as Sender,
+                DATEADD(MINUTE," + Helper.Global.addMinutes + @",convert(varchar,m.sentdatetime,106) + ' ' + convert(varchar,m.sentdatetime,108)) as SentDate,                
+                DATEADD(MINUTE," + Helper.Global.addMinutes + @",convert(varchar,d.insertdate,106) + ' ' + convert(varchar,d.insertdate,108)) as DeliveredDate,
+                msgtext as Message,
+                CASE WHEN d.dlvrstatus is null then 'UNKNOWN' ELSE CASE WHEN d.dlvrstatus='Delivered' then 'DELIVERED' ELSE 'FAILED' END END 
+                AS MessageState, d.dlvrtext as RESPONSE FROM MSGSUBMITTED m with (nolock) left join DELIVERY d with (nolock) on m.msgid=d.msgid and convert(varchar,m.insertdate,102)=convert(varchar,d.insertdate,102) 
+                where m.PROFILEID='" + userid + "' /* and m.senderid='" + sender + "' */ and m.sentdatetime between '" + f + "' and '" + t + "' and m.fileid=1 order by m.sentdatetime ";
+
+            }
+            else
+            {
+                //' ' + left(convert(varchar,m.tomobile),len(convert(varchar,m.tomobile))-4) + 'XXXX'
+                sql = @"select m.msgid as MessageId, " + str + @" as MobileNo, m.senderid as Sender,
+                    DATEADD(MINUTE," + Helper.Global.addMinutes + @",convert(varchar,m.sentdatetime,106) + ' ' + convert(varchar,m.sentdatetime,108)) as SentDate,
+                    DATEADD(MINUTE," + Helper.Global.addMinutes + @",convert(varchar,d.insertdate,106) + ' ' + convert(varchar,d.insertdate,108)) as DeliveredDate,
+                    msgtext as Message,
+                CASE WHEN d.dlvrstatus is null then 'UNKNOWN' ELSE CASE WHEN d.dlvrstatus='Delivered' then 'DELIVERED' ELSE 'FAILED' END END 
+                AS MessageState, d.dlvrtext as RESPONSE FROM MSGSUBMITTED m with (nolock) left join DELIVERY d with (nolock) on m.msgid=d.msgid and convert(varchar,m.insertdate,102)=convert(varchar,d.insertdate,102) 
+                where m.PROFILEID='" + userid + "' and m.senderid='" + sender + "' and m.sentdatetime between '" + f + "' and '" + t + "' and m.fileid=" + fileid + " order by m.sentdatetime ";
+
+            }
+            DataTable dt = database.GetDataTable(sql);
+            return dt;
+        }
+
+
+        public DataTable GetSMSReport4MOBILE_user(string f, string t, string mob, string user)
+        {
+            string sql = "";
+            string dlt = "";
+
+            sql = @"select row_number() over (Order by s.createdat desc ) as Sln,
+                    s.msgid,' ' + convert(varchar,s.tomobile) as mobile,s.senderid, s.msgtext,convert(varchar, s.sentdatetime,106) + ' ' + convert(varchar, s.sentdatetime,108) as senttime,
+                d.DLVRSTATUS + '  ' + convert(varchar, d.DLVRTIME,106) + ' ' + convert(varchar, d.DLVRTIME,108) as dlrstat 
+                 from customer c with (nolock)
+                inner
+                 join MSGSUBMITTED s with (nolock) on c.username = s.profileid 
+                left join delivery d with (nolock) on s.msgid = d.msgid
+                where s.sentdatetime between '" + f + "' and '" + t + @"' and s.profileid='" + user + "' ";
+            if (mob != "")
+                sql = sql + " and s.tomobile='91" + mob + "'";
+            //if (usertype == "ADMIN")
+            //{
+            //    dlt = Convert.ToString(database.GetScalarValue("Select Top 1 dltno from customer where username='" + user + "'"));
+            //    sql = sql + " and c.dltno = '" + dlt + "' ";
+            //}
+
+            //sql = sql + " group by c.userName,c.SenderID";
+            DataTable dt = database.GetDataTable(sql);
+            return dt;
+        }
+        public DataTable GetCRDRLog(string f, string t, string user, string usertype, string dlt)
+        {
+            string t1 = t;
+            t = t + " 23:59:59";
+            string sql = @"select row_number() over (Order by c.userName) as Sln,c.username, c.SenderID, c.compname, c.email, c.mobile1,c.balance, 
+sum(cr) as cr,sum(dr) as dr,'" + f + "' + ' to ' + '" + t + @"' as tdate, '" + f + "' as frmdate, '" + t + @"' as todate from
+(
+select d.username, sum(case when d.trantype='C' then d.balance else 0 end) as cr,sum(case when d.trantype='D' then d.balance else 0 end) as dr,
+max(convert(varchar,d.trandate,102)) as tdate
+from userBalCrDr d where d.trandate between '" + f + "' and '" + t + @"'
+group by d.username
+)as x inner join customer c on x.username=c.username ";
+            if (usertype == "USER") sql = sql + " and c.USERNAME = '" + user + "' ";
+            if (usertype == "ADMIN") sql = sql + " and c.dltno = '" + dlt + "' ";
+            sql = sql + " group by c.username,c.SenderID, c.compname, c.email, c.mobile1,c.balance,tdate order by tdate,c.username";
+            DataTable dt = database.GetDataTable(sql);
+            return dt;
+        }
+
+        public DataTable GetCRDRLogNewDETAIL(string user, string usertype, string f, string t, string prod)
+        {
+            //string sql = @"SELECT USERNAME,TRANTYPE,ROUND(SUM(BALANCE), 2) AS AMOUNT, TDATE, REMARKS FROM
+            //(
+            //select d.username, d.trantype, d.balance,
+            //convert(varchar, d.trandate, 102) as tdate, isnull(REMARKS, '') as REMARKS
+            //from userBalCrDr d where username = '" + user + @"' and d.trandate between '" + f + "' and '" + t + @"' AND CLICKRECHARGE = 0
+            //union all
+            //select userid as username, 'D' as trantype, SUM(SUBMITTED * (rate / 100)) as balance, convert(varchar, SMSDATE, 102) as tdate, '' as remarks from DAYSUMMARY
+            //where userid = '" + user + @"' and SMSDATE between '" + f + "' and '" + t + @"'
+            //GROUP BY userid, SMSDATE
+            //UNION ALL
+            //SELECT S.USERID AS USERNAME, 'D' AS TRANTYPE, C.URLRATE * COUNT(S.ID)AS BALANCE, convert(varchar, S.ADDED, 102) as tdate, '' as remarks from
+            //    short_urls S INNER JOIN CUSTOMER C ON S.USERID = C.USERNAME WHERE userid = '" + user + @"' AND S.ADDED  between '" + f + "' and '" + t + @"'
+            //GROUP BY S.USERID, convert(varchar, S.ADDED, 102), C.urlrate
+            //) Y GROUP BY USERNAME, TRANTYPE, TDATE, REMARKS
+            //order by tdate";
+            string sql = "";
+            if (prod == "SMS")
+            {
+                sql = @"SELECT USERNAME,TRANTYPE,ROUND(SUM(BALANCE), 2) AS AMOUNT, TDATE, REMARKS FROM
+            (
+            select d.username, d.trantype,case WHEN d.trantype='C' THEN sum(case when d.trantype='C' then d.balance else 0 end)
+            WHEN d.trantype='D' THEN  sum(case when d.trantype='D' then d.balance else 0 end) END AS BALANCE,
+            convert(varchar, d.trandate, 102) as tdate, isnull(REMARKS, '') as REMARKS
+            from userBalCrDr d where username = '" + user + @"' and d.trandate between '" + f + "' and '" + t + @"' AND CLICKRECHARGE = 0
+            GROUP By d.username,d.trantype,convert(varchar, d.trandate, 102),REMARKS ) 
+            Y GROUP BY USERNAME, TRANTYPE, TDATE, REMARKS
+            order by tdate desc";
+            }
+            else
+            {
+                sql = @"SELECT USERNAME,TRANTYPE,ROUND(SUM(BALANCE), 2) AS AMOUNT, TDATE, REMARKS FROM
+            (
+            select d.username, d.trantype,case WHEN d.trantype='C' THEN sum(case when d.trantype='C' then d.balance else 0 end)
+            WHEN d.trantype='D' THEN  sum(case when d.trantype='D' then d.balance else 0 end) END AS BALANCE,
+            convert(varchar, d.trandate, 102) as tdate, isnull(REMARKS, '') as REMARKS
+            from userBalCrDr d where username = '" + user + @"' and d.trandate between '" + f + "' and '" + t + @"' AND CLICKRECHARGE = 1
+            GROUP By d.username,d.trantype,convert(varchar, d.trandate, 102),REMARKS ) 
+            Y GROUP BY USERNAME, TRANTYPE, TDATE, REMARKS
+            order by tdate desc";
+            }
+
+            DataTable dt = database.GetDataTable(sql);
+            return dt;
+
+        }
+        public DataTable GetCRDRLogNew(string f, string t, string user, string usertype, string dlt, string sms, string url, string clk, string all)
+        {
+            if (all == "Y")
+            {
+                sms = "Y"; url = "Y"; clk = "Y";
+            }
+            string t1 = t;
+            t = t + " 23:59:59";
+            string sql = "";
+
+            if (f == "02/JAN/1900") sql = "Select '' as product, 0 as cr, 0 as dr,'' as fromdate,'' as todate,'' as remarks ";
+            if (sms == "Y")
+            {
+                sql = @"select 'SMS' AS PRODUCT,'Rs. ' + convert(varchar,sum(cr)) as cr,'Rs. ' + convert(varchar,sum(dr)) as dr,'" + f + "' as fromdate, '" + t1 + @"' as todate,x.remarks from
+                (
+                select d.username, sum(case when d.trantype='C' then d.balance else 0 end) as cr,sum(case when d.trantype='D' then d.balance else 0 end) as dr,
+                max(convert(varchar,d.trandate,102)) as tdate,isnull(REMARKS,'') as REMARKS
+                from userBalCrDr d where d.trandate between '" + f + "' and '" + t + @"' AND CLICKRECHARGE=0
+                group by d.username,REMARKS
+                )as x inner join customer c on x.username=c.username WHERE 1=1 ";
+                if (usertype == "USER") sql = sql + " and c.USERNAME = '" + user + "' ";
+                if (usertype == "ADMIN") sql = sql + " and c.dltno = '" + dlt + "' ";
+                sql = sql + " group by x.remarks ";
+            }
+
+            if (url == "Y")
+            {
+                if (sms == "Y") sql = sql + " Union All ";
+                sql = sql + @"select 'URL' AS PRODUCT,'Rs. 0' as cr,'Rs. ' + convert(varchar,count(x.ID) * c.urlrate) as dr,'" + f + "' as fromdate, '" + t1 + @"' as todate,'' as remarks from
+                (
+                select D.USERID,D.ID FROM SHORT_UrLS d where d.ADDED between '" + f + "' and '" + t + @"' 
+                group by D.USERID,D.ID
+                )as x inner join customer c on x.USERID=c.username WHERE 1=1 ";
+                if (usertype == "USER") sql = sql + " and c.USERNAME = '" + user + "' ";
+                if (usertype == "ADMIN") sql = sql + " and c.dltno = '" + dlt + "' ";
+                sql = sql + " group by  c.urlrate ";
+            }
+
+            if (clk == "Y")
+            {
+                if (sms == "Y" || url == "Y") sql = sql + " Union All ";
+
+                sql = sql + @"select 'Click' as Product,Convert(varchar, 1000 * (select count(*) from short_urls where userid = '" + user + @"' and added between '" + f + "' and '" + t + @"')) cr, convert(varchar,sum (cnt)) as dr, '" + f + "' as fromdate, '" + t1 + @"' as todate,'' as remarks from (
+                select count(*) as cnt from short_urls u inner join stats s on u.id = s.shortUrl_id where s.click_date between '" + f + "' and '" + t + @"' and u.userid = '" + user + @"'
+union all
+select count(*) as cnt from short_urls u inner join mobstats s on u.id = s.shortUrl_id where s.click_date between '" + f + "' and '" + t + @"' and u.userid = '" + user + @"' ) x ";
+
+            }
+            //sql = sql + "  order by c.username";
+
+
+
+
+
+
+            DataTable dt = database.GetDataTable(sql);
+            return dt;
+        }
+        public DataTable GetCRDRLogDetail(string f, string t, string user)
+        {
+            string sql = @"select case when trantype='C' then 'Credit' else 'Debit' end as TranType, balance as amount, convert(varchar,trandate,106) + ' ' + convert(varchar(5),trandate,108) as trandate, trandate as trandate1,ISNULL(Remarks,'') Remarks
+from userBalCrDr where username = '" + user + "' and trandate between '" + f + "' and '" + t + @"' order by trandate1";
+            DataTable dt = database.GetDataTable(sql);
+            return dt;
+        }
+        public DataTable GetCRDRLogDetailSMS(string f, string t, string user)
+        {
+            string sql = @"select case when trantype='C' then 'Credit' else 'Debit' end as TranType, convert(numeric(10),round(balance/smsrate,0)) as amount, convert(varchar,trandate,106) + ' ' + convert(varchar(5),trandate,108) as trandate,Remarks
+from userBalCrDr where username = '" + user + "' and trandate between '" + f + "' and '" + t + @"' order by trandate desc";
+            DataTable dt = database.GetDataTable(sql);
+            return dt;
+        }
+        public DataTable GetCRDRLogDetailSMS(string f, string t)
+        {
+            string sql = @"select u.UserName, convert(varchar,u.trandate,106) + ' ' + convert(varchar(5),u.trandate,108) as TransactionDate, case when u.trantype='C' then 'Credit' else 'Debit' end as TransactionType, convert(numeric(10),u.balance) as Amount,c.rate_normalsms [NormalRate] ,u.Remarks 
+from userBalCrDr u with (nolock) Inner join customer c with (nolock) ON u.UserName = c.UserName  where trandate between '" + f + "' and '" + t + @"' order by trandate ";
+            DataTable dt = database.GetDataTable(sql);
+            return dt;
+        }
+        public DataTable GetCRDRLogDetailSMS_Admin(string f, string t, string usertype, string dlt)
+        {
+            string sql = @"select u.UserName, convert(varchar,u.trandate,106) + ' ' + convert(varchar(5),u.trandate,108) as TransactionDate, case when u.trantype='C' then 'Credit' else 'Debit' end as TransactionType, convert(numeric(10),u.balance) as Amount,c.rate_normalsms [NormalRate],u.Remarks 
+from userBalCrDr u with (nolock) Inner join customer c with (nolock) ON u.UserName = c.UserName 
+where trandate between '" + f + "' and '" + t + @"'";
+            if (usertype == "ADMIN") sql = sql + " and c.dltno = '" + dlt + "' ";
+            sql = sql + "order by trandate";
+            DataTable dt = database.GetDataTable(sql);
+            return dt;
+        }
+        public DataTable GetClickReort(string f, string t, string user, string usertype, string dlt)
+        {
+            t = t + " 23:59:59";
+            string sql = @"select row_number() over (Order by U.USERID) as Sln, U.USERID AS USERNAME, '" + "" + @"/' + U.segment as SmallURL,COUNT(S.SHORTURL_ID) AS No_Of_Hits
+FROM short_urls U 
+inner join customer c on u.userid=c.username
+left join stats S on U.ID = S.SHORTURL_ID 
+where U.added between '" + f + "' and '" + t + @"' 
+AND U.mobtrack <> 'Y' ";
+            if (usertype == "ADMIN") sql = sql + " and c.dltno = '" + dlt + "' ";
+            sql = sql + " GROUP BY U.USERID,U.SEGMENT ";
+            DataTable dt = database.GetDataTable(sql);
+            return dt;
+        }
+
+        public DataTable GetUserReportDetail(string userid, string id)
+        {
+            bool mobtrk = false;
+            //d b Y : h i p
+
+            string sql = "";
+            if (mobtrk)
+            {
+                sql = @"SELECT 0 as SLNO,m.mobile,DATE_FORMAT(DATE_ADD(m.sentdate, INTERVAL 750 MINUTE), '%d-%b-%Y %h:%i %p') as smsdate,
+DATE_FORMAT(DATE_ADD(s.click_date, INTERVAL 750 MINUTE), '%d-%b-%Y %h:%i %p')
+as ClickDate, s.ip, s.referer,s.Browser, s.Platform, s.IsMobileDevice, s.MobileDeviceManufacturer, s.MobileDeviceModel
+FROM mobtrackurl m left join mobstats s on m.urlid = s.shortUrl_id and m.id = s.urlid
+where m.urlid = '" + id + "' order by click_date Limit 1000000";
+            }
+            else
+            {
+                sql = @"select row_number() over (Order by click_date desc) as Sln, convert(varchar,click_date,106) + ' ' + convert(varchar,click_date,108)  as ClickDate, ip, referer,
+            Browser, Platform, IsMobileDevice, MobileDeviceManufacturer, MobileDeviceModel from stats
+            where shorturl_id = (select id from short_urls where segment ='" + id.Replace(@"/", "") + "') order by click_date desc ";
+            }
+            DataTable dt = new DataTable("dt");
+            dt = database.GetDataTable(sql);
+
+            return dt;
+        }
+
+        public string getIPapikey()
+        {
+            return database.getIPapikey();
+        }
+        public void SaveIPLocation(DataTable dt, string segment, string mobstat, string ip, string ipall, string iprem)
+        {
+            if (dt.Rows.Count > 0)
+            {
+                string sql = " INSERT INTO iplocation (Atas,city,country,countryCode,isp,lat,lon,org,query,region,regionName,status,timezone,zip,segment,mobtrk,ipadd,ipall,iprem) values " +
+                    "('" + dt.Rows[0]["as"].ToString() +
+                    "','" + (dt.Rows[0]["countryCode"].ToString().Trim().ToUpper() == "CA" ? "India" : dt.Rows[0]["city"].ToString()) +
+                    "','" + dt.Rows[0]["country"].ToString() +
+                    "','" + dt.Rows[0]["countryCode"].ToString() +
+                    "','" + dt.Rows[0]["isp"].ToString() +
+                    "','" + dt.Rows[0]["lat"].ToString() +
+                    "','" + dt.Rows[0]["lon"].ToString() +
+                    "','" + dt.Rows[0]["org"].ToString() +
+                    "','" + dt.Rows[0]["query"].ToString() +
+                    "','" + dt.Rows[0]["region"].ToString() +
+                    "','" + (dt.Rows[0]["countryCode"].ToString().Trim().ToUpper() == "CA" ? "India" : dt.Rows[0]["regionName"].ToString()) +
+                    "','" + dt.Rows[0]["status"].ToString() +
+                    "','" + dt.Rows[0]["timezone"].ToString() +
+                    "','" + dt.Rows[0]["zip"].ToString() +
+                    "','" + segment +
+                    "','" + mobstat +
+                    "','" + ip +
+                    "','" + ipall +
+                    "','" + iprem +
+                    "')";
+                database.ExecuteNonQuery(sql);
+            }
+        }
+
+        public void SaveIPLocationNew(string mobile, string segment, string operators, bool ported, bool roaming, bool permanent, string countryName, string cityName)
+        {
+            string sql = string.Format("INSERT INTO iplocation(mobile,segment,operator,ported,roaming,permanent,country, regionName) values('{0}','{1}','{2}',{3},{4},{5},'{6}','{7}')", mobile, segment, operators, ported == false ? 0 : 1, roaming == false ? 0 : 1, permanent == false ? 0 : 1, countryName, cityName);
+            database.ExecuteNonQuery(sql);
+        }
+
+        public DataTable GetSenderIdList(string f, string t, string usertype, string user)
+        {
+            string sql = "";
+            string dlt = "";
+            if (usertype == "ADMIN")
+            {
+                dlt = Convert.ToString(database.GetScalarValue("Select Top 1 dltno from customer where username='" + user + "'"));
+                sql = @"select row_number() over (Order by ACCOUNTCREATEDON DESC) as Sln, C.compname,C.fullname,C.mobile1 as mobile,C.email,C.senderid as sender,C.username from customer C where dltno = '" + dlt + "' AND ACCOUNTCREATEDON BETWEEN '" + f + "' AND '" + t + "' ORDER BY ACCOUNTCREATEDON DESC ";
+            }
+            if (usertype == "SYSADMIN")
+            {
+                //dlt = Convert.ToString(database.GetScalarValue("Select Top 1 dltno from customer where username='" + user + "'"));
+                sql = @"select row_number() over (Order by ACCOUNTCREATEDON DESC) as Sln, C.compname,C.fullname,C.mobile1 as mobile,C.email,C.senderid as sender,C.username from customer C where ACCOUNTCREATEDON BETWEEN '" + f + "' AND '" + t + "' ORDER BY ACCOUNTCREATEDON DESC ";
+            }
+            DataTable dt = database.GetDataTable(sql);
+            return dt;
+        }
+        public bool CheckSenderIDforAdmin(string s, string admin)
+        {
+            int x = 0;
+            x = Convert.ToInt16(database.GetScalarValue("Select count(SENDERID) FROM senderidmast WHERE SENDERID = '" + s + "' and userid='" + admin + "' "));
+            return (x == 0 ? false : true);
+        }
+
+        public bool CheckSenderID(string s)
+        {
+            int x = 0;
+            x = Convert.ToInt16(database.GetScalarValue("Select count(SENDERID) FROM senderidmast WHERE SENDERID = '" + s + "' "));
+            return (x == 0 ? false : true);
+        }
+        public void UpdateSender(string un, string s, string user, string updtype, string ccode)
+        {
+            //"UPDATEONLY"
+            string sql = "" +
+                " DECLARE @SENDER VARCHAR(100)" +
+                " SELECT @SENDER = SENDERID FROM CUSTOMER WHERE USERNAME = '" + un + "'; " +
+                " Update customer set senderid = '" + s + "' where username ='" + un + "'; " +
+                " INSERT INTO SENDERIDALLOTLOG (OLDSENDERID, NEWSENDERID, ALLOTBYUSER) VALUES (@SENDER, '" + s + "','" + user + "'); " +
+                " IF NOT EXISTS (SELECT * FROM senderidmast WHERE USERID='" + un + "' AND SENDERID='" + s + "' AND countrycode='" + ccode + "' ) INSERT INTO senderidmast (USERID, SENDERID,countrycode) VALUES ('" + un + "','" + s + "','" + ccode + "') ";
+            if (updtype == "UPDATEANDINSERT") sql = sql + " insert into senderidmaster (senderid, createdby, createddate,countrycode) values ('" + s + "','" + user + "',getdate(),'" + ccode + "'); ";
+            database.ExecuteNonQuery(sql);
+        }
+
+        public int CountSenderId(string s)
+        {
+            return Convert.ToInt16(database.GetScalarValue(string.Format("Select count(SENDERID) FROM senderidmast WHERE userid = '{0}'", s)));
+        }
+        public void RemoveSender(string s, string user)
+        {
+            string sql = string.Format("delete from senderidmast WHERE SENDERID = '{0}' AND userid='{1}'", s, user);
+            sql += " DECLARE @SENDER VARCHAR(100) ";
+            sql += string.Format("SELECT top 1 @SENDER = senderid from senderidmast WHERE userid = '{0}' ;", user);
+            sql += " Update customer set senderid =  @SENDER where username ='" + user + "'; ";
+            sql += " INSERT INTO SENDERIDREMOVELOG (SENDERID, REMOVEBYUSER) VALUES ('" + s + "','" + user + "'); ";
+            database.ExecuteNonQuery(sql);
+        }
+
+
+        public DataTable GetSenderIdListForApproval(string f, string t)
+        {
+            string sql = "";
+
+            sql = @"select row_number() over (Order by s.createdat DESC) as Sln, C.compname,C.fullname,C.mobile1 as mobile,C.email,s.senderid as sender,C.username,s.filepath,s.countrycode " +
+            " from customer C inner join senderidrequeset s on c.username=s.username where (isnull(s.rejected,0)=0 and isnull(s.allotedsenderid,'')='') and  s.createdat BETWEEN '" + f + "' AND '" + t + "' ORDER BY s.createdat DESC ";
+
+            DataTable dt = database.GetDataTable(sql);
+            return dt;
+        }
+
+        public void ApproveRejectSenderId(string sender, string username, string user, string type, string ccode)
+        {
+            string sql = "";
+            if (type == "REJECT")
+                sql = "Update senderidrequeset set REJECTed=1, ALLOTEDBY='" + user + "', ALLOTEDON=GETDATE() WHERE USERNAME='" + username + "' AND SENDERID='" + sender + "' AND countrycode='" + ccode + "' ";
+            if (type == "APPROVE")
+                sql = "Update senderidrequeset set REJECTed=0, ALLOTEDBY='" + user + "', ALLOTEDON=GETDATE(),ALLOTEDSENDERID='" + sender + "' WHERE USERNAME='" + username + "' AND SENDERID='" + sender + "' AND countrycode='" + ccode + "' ; if not exists (select * from senderidmast where userid='" + username + "' and senderid='" + sender + "' AND countrycode='" + ccode + "' ) insert into senderidmast (userid,senderid,countrycode) values ('" + username + "','" + sender + "','" + ccode + "')  ";
+            database.ExecuteNonQuery(sql);
+        }
+        public DataTable GetTemplateListForApproval(string f, string t)
+        {
+            string sql = "";
+
+            sql = @"select row_number() over (Order by s.createdat DESC) as Sln, C.compname,C.fullname,C.mobile1 as mobile, C.email, isnull(s.Templateid,'') as templateid, s.Template as template,C.username,s.filepath " +
+            " from customer C inner join templaterequest s on c.username=s.username where (isnull(s.rejected,0)=0 and isnull(s.allotted,'')='') and  s.createdat BETWEEN '" + f + "' AND '" + t + "' ORDER BY s.createdat DESC ";
+
+            DataTable dt = database.GetDataTable(sql);
+            return dt;
+        }
+        public DataTable GetTemplateId1(string userid)
+        {
+            string sql = "";
+            sql = @"select isnull(tempname,'') [TemplateID],TemplateID as template from templaterequest where username='" + userid + "' and isnull(allotted ,0)=1 and isnull(TemplateID,'')<>'' order by templateid";
+            DataTable dt = database.GetDataTable(sql);
+            return dt;
+        }
+
+        public DataTable GetTemplateId(string userid, int id)
+        {
+            string sql = "";
+            // sql = @"select Concat(TemplateID ,' ' ,isnull(tempname,'')) [TemplateID],TemplateID as template,TemplateID as onlyTemplateID from templaterequest where username='" + userid + "' and isnull(allotted ,0)=1 and isnull(IsWhatsapp,0)=0 and isnull(TemplateID,'')<>'' order by templateid";
+            // sql = @"Select * from RcsTemplateHeader where userid = '" + userid + "' and rcstype='" + id + "'";
+            sql = @"declare @username varchar(100) select @username=smsaccid from MapSMSAcc where RCSAccId='" + userid + "' select Concat(TemplateID ,' (' ,isnull(tempname,'')+')') [TemplateIDS],* from emimpanel.dbo.templaterequest with(nolock) where username=@username and isnull(allotted ,0)=1 and isnull(IsWhatsapp,0)=0 and isnull(TemplateID,'')<>'' order by templateid";
+            //sql = @"select c.phonecode as countrycode,c.name +' - ' +cast(c.phonecode as varchar) as name from countryMast c";
+            //sql = @"select cast(templateid as varchar) +' ( ' + templatename +')' as name,* from  RcsTemplateHeader where userid = '" + userid + "' and rcstype='" + id + "'";
+            DataTable dt = database.GetDataTable(sql);
+            return dt;
+        }
+        public DataTable GetRCSTemplateId(string userid, int id)
+        {
+            string sql = "";
+            // sql = @"select Concat(TemplateID ,' ' ,isnull(tempname,'')) [TemplateID],TemplateID as template,TemplateID as onlyTemplateID from templaterequest where username='" + userid + "' and isnull(allotted ,0)=1 and isnull(IsWhatsapp,0)=0 and isnull(TemplateID,'')<>'' order by templateid";
+            //sql = @"Select * from RcsTemplateHeader where userid = '" + userid + "' and rcstype='" + id + "'";
+            //sql = @"select c.phonecode as countrycode,c.name +' - ' +cast(c.phonecode as varchar) as name from countryMast c";
+            //sql = @"select cast(templateid as varchar) +' ( ' + templatename +')' as name,* from  RcsTemplateHeader where userid = '" + userid + "' and rcstype='" + id + "' and active=1 order by TemplateID desc";
+            sql = @"select cast(rth.templateid as varchar) +' ( ' + rth.templatename +')' as name,rtd.TemplateID from  RcsTemplateHeader rth,RcsTemplateDetail rtd where rth.templateid=rtd.templateid and rth.userid ='" + userid + "' and rth.rcstype='" + id + "' and rth.active=1 and rtd.Active=1 group by rth.TemplateID,rtd.TemplateID, rth.templatename order by rth.TemplateID desc";
+            DataTable dt = database.GetDataTable(sql);
+            return dt;
+        }
+        public void ApproveRejectTemplate(string template, string username, string user, string type)
+        {
+            string sql = "";
+            if (type == "REJECT")
+                sql = "Update templaterequest set REJECTed=1, doneby='" + user + "', donedate=GETDATE() WHERE USERNAME='" + username + "' AND template=N'" + template.Replace("'", "''") + "' ";
+            if (type == "APPROVE")
+                sql = "Update templaterequest set allotted=1, doneby='" + user + "', donedate=GETDATE() WHERE USERNAME='" + username + "' AND template=N'" + template.Replace("'", "''") + "' ";
+            database.ExecuteNonQuery(sql);
+        }
+        public DataTable GetUserListForBlockUnBlock(string usertype, string user, string status)
+        {
+            string f = "", t = "";
+            string sql = "";
+            string dlt = "";
+            if (usertype == "ADMIN")
+            {
+                dlt = Convert.ToString(database.GetScalarValue("Select Top 1 dltno from customer where username='" + user + "'"));
+                sql = @"select row_number() over (Order by ACCOUNTCREATEDON DESC) as Sln, C.compname,C.fullname,C.mobile1 as mobile,C.email,C.senderid as sender,C.username,'" + status + "' as status from customer C where dltno = '" + dlt + "' /* AND ACCOUNTCREATEDON BETWEEN '" + f + "' AND '" + t + "' */ and active = " + (status == "BLOCKED" ? "0" : "1") + " ORDER BY ACCOUNTCREATEDON DESC ";
+            }
+            if (usertype == "SYSADMIN")
+            {
+                //dlt = Convert.ToString(database.GetScalarValue("Select Top 1 dltno from customer where username='" + user + "'"));
+                sql = @"select row_number() over (Order by ACCOUNTCREATEDON DESC) as Sln, C.compname,C.mobile1 as mobile,C.email,C.senderid as sender,C.username,'" + status + "' as status from customer C  where /* ACCOUNTCREATEDON BETWEEN '" + f + "' AND '" + t + "' and */ active = " + (status == "BLOCKED" ? "0" : "1") + " ORDER BY ACCOUNTCREATEDON DESC ";
+            }
+            DataTable dt = database.GetDataTable(sql);
+            return dt;
+        }
+        public void BlockUnblockUser(string username, string user, string type)
+        {
+            string sql = "";
+            sql = "Update Customer set active=" + (type == "BLOCK" ? "0" : "1") + " WHERE USERNAME='" + username + "' ; insert into blockunblocklog (username,blockunblock,doneby,donedate) values ('" + username + "','" + (type == "BLOCK" ? "B" : "U") + "','" + user + "',getdate()) ; ";
+            database.ExecuteNonQuery(sql);
+        }
+        //--------------------DASHBARD ----
+        public DataTable GetDashboardSummary(string user)
+        {
+
+            string sql = @"select Convert(varchar,isnull(DATEADD(mi," + Helper.Global.addMinutes + @", updtime),getdate()),106) + ' ' + Convert(varchar(5),isnull(DATEADD(mi," + Helper.Global.addMinutes + @", updtime),getdate()),108) as updtime,
+isnull(smssubmitted,0) as smssubmitted,isnull(smsdelivered,0) as smsdelivered,isnull(smsfailed,0) as smsfailed,
+isnull(smsunknown,0) as smsunknown,isnull(links,0) as links,isnull(clicks,0) as clicks,isnull(smsclicks,0) as smsclicks from dashboard with (nolock) where userid='" + user + "'";
+            DataTable dt = database.GetDataTable(sql);
+            return dt;
+        }
+        public void UpdateDashboard(string user, string s, string d, string f, string l, string c, string m)
+        {
+            string sql = @"Update Dashboard set updtime=getdate(),smssubmitted='" + s + "',smsdelivered='" + d + "',smsfailed='" + f + "',smsunknown='" + 0 + "',links='" + l + "',clicks='" + c + "',smsclicks='" + m + "' where userid='" + user + "'";
+            database.ExecuteNonQuery(sql);
+        }
+
+        public DataTable GetSMSSummary(string f, string t, string usertype, string user)
+        {
+            string sql = "";
+            string dlt = "";
+
+            sql = @"select count(s.id) submitted, 
+sum(case when isnull(d.dlvrstatus,'')='Delivered' then 1 else 0 end) as delivered,
+sum(case when isnull(d.dlvrstatus,'')<>'Delivered' AND d.dlvrstatus IS NOT NULL then 1 else 0 end) as failed,
+sum(case when d.dlvrstatus IS NULL then 1 else 0 end) as unknown
+                 from customer c with(nolock)
+                inner
+                 join MSGSUBMITTED s with(nolock) on c.username = s.profileid 
+                left join delivery d with(nolock) on s.msgid = d.msgid
+                where s.createdat between '" + f + "' and '" + t + @"' ";
+            if (usertype == "ADMIN")
+            {
+                dlt = Convert.ToString(database.GetScalarValue("Select Top 1 dltno from customer where username='" + user + "'"));
+                sql = sql + " and c.dltno = '" + dlt + "' ";
+            }
+            if (usertype == "USER")
+            {
+                sql = sql + " and c.USERNAME = '" + user + "' ";
+            }
+
+            DataTable dt = database.GetDataTable(sql);
+            return dt;
+        }
+        public DataTable GetURLSummary(string f, string t, string usertype, string user)
+        {
+            string sql = "";
+            string dlt = "";
+
+            sql = @"select count(distinct U.id) urls, 
+sum(case when isnull(S.SHORTURL_ID, 0) = 0 then 0 else 1 end) as CLICKED
+                 from customer c with(nolock)
+                inner join short_urls U with(nolock) on c.username = U.userid 
+                left join stats S with(nolock) on U.ID = S.SHORTURL_ID 
+                where U.ADDED between '" + f + "' and '" + t + @"' ";
+            if (usertype == "ADMIN")
+            {
+                dlt = Convert.ToString(database.GetScalarValue("Select Top 1 dltno from customer where username='" + user + "'"));
+                sql = sql + " and c.dltno = '" + dlt + "' ";
+            }
+
+            if (usertype == "USER")
+            {
+
+                sql = sql + " and c.username = '" + user + "' ";
+            }
+
+            DataTable dt = database.GetDataTable(sql);
+            return dt;
+        }
+        public DataTable GetSMSClickSummary(string f, string t, string usertype, string user)
+        {
+            string sql = "";
+            string dlt = "";
+
+            sql = @"SELECT COUNT (MS.ID) FROM CUSTOMER C with(nolock)
+inner join short_urls U with(nolock) on c.username = U.userid
+INNER JOIN MOBSTATS MS with(nolock) ON U.ID=MS.SHORTURL_ID
+                where ms.click_date between '" + f + "' and '" + t + @"' ";
+            if (usertype == "ADMIN")
+            {
+                dlt = Convert.ToString(database.GetScalarValue("Select Top 1 dltno from customer with(nolock) where username='" + user + "'"));
+                sql = sql + " and c.dltno = '" + dlt + "' ";
+            }
+            if (usertype == "USER")
+            {
+                sql = sql + " and c.username = '" + user + "' ";
+            }
+            DataTable dt = database.GetDataTable(sql);
+            return dt;
+        }
+        public string GetAccountSummary(string f, string t, string usertype, string user)
+        {
+            string sql = "";
+            string dlt = "";
+
+            sql = @" SELECT COUNT (c.username) FROM CUSTOMER c
+                where c.ACCOUNTCREATEDON between '" + f + "' and '" + t + @"' ";
+            if (usertype == "ADMIN")
+            {
+                dlt = Convert.ToString(database.GetScalarValue("Select Top 1 dltno from customer where username='" + user + "'"));
+                sql = sql + " and c.dltno = '" + dlt + "' ";
+            }
+
+            string dt = Convert.ToString(database.GetScalarValue(sql));
+            return dt;
+        }
+        public string GetAccountSummaryLastMonth(string f, string t, string usertype, string user)
+        {
+            string sql = "";
+            string dlt = "";
+
+            sql = @" SELECT COUNT (c.username) FROM CUSTOMER c
+                where convert(varchar,c.ACCOUNTCREATEDON,102) >= CONVERT(varchar,dateadd(d,-(day(dateadd(m,-1,getdate()-2))),dateadd(m,-1,getdate()-1)),102)
+                and convert(varchar,c.ACCOUNTCREATEDON,102) <= CONVERT(varchar,dateadd(d,-(day(getdate())),getdate()),102) ";
+            if (usertype == "ADMIN")
+            {
+                dlt = Convert.ToString(database.GetScalarValue("Select Top 1 dltno from customer where username='" + user + "'"));
+                sql = sql + " and c.dltno = '" + dlt + "' ";
+            }
+
+            string dt = Convert.ToString(database.GetScalarValue(sql));
+            return dt;
+        }
+        public string GetCreditSummary(string f, string t, string usertype, string user)
+        {
+            string sql = "";
+            string dlt = "";
+
+            sql = @" select sum(u.balance) from userBalCrDr u inner join customer c on u.username=c.username
+                where u.trantype='C' and u.Trandate between '" + f + "' and '" + t + @"' ";
+            if (usertype == "ADMIN")
+            {
+                dlt = Convert.ToString(database.GetScalarValue("Select Top 1 dltno from customer where username='" + user + "'"));
+                sql = sql + " and c.dltno = '" + dlt + "' ";
+            }
+
+            string dt = Convert.ToString(database.GetScalarValue(sql));
+            return dt;
+        }
+        public string GetCreditSummaryLastMonth(string f, string t, string usertype, string user)
+        {
+            string sql = "";
+            string dlt = "";
+
+            sql = @" select sum(u.balance) from userBalCrDr u inner join customer c on u.username=c.username
+                where u.trantype='C' and convert(varchar,u.trandate,102) >= CONVERT(varchar,dateadd(d,-(day(dateadd(m,-1,getdate()-2))),dateadd(m,-1,getdate()-1)),102)
+                and convert(varchar,u.trandate,102) <= CONVERT(varchar,dateadd(d,-(day(getdate())),getdate()),102) ";
+            if (usertype == "ADMIN")
+            {
+                dlt = Convert.ToString(database.GetScalarValue("Select Top 1 dltno from customer where username='" + user + "'"));
+                sql = sql + " and c.dltno = '" + dlt + "' ";
+            }
+
+            string dt = Convert.ToString(database.GetScalarValue(sql));
+            return dt;
+        }
+        public string GetActiveAccountSummary(string f, string t, string usertype, string user, string stat)
+        {
+            string sql = "";
+            string dlt = "";
+
+            sql = @" SELECT count(c.username) FROM CUSTOMER c
+                where c.active = " + stat;
+            if (usertype == "ADMIN")
+            {
+                dlt = Convert.ToString(database.GetScalarValue("Select Top 1 dltno from customer where username='" + user + "'"));
+                sql = sql + " and c.dltno = '" + dlt + "' ";
+            }
+
+            string dt = Convert.ToString(database.GetScalarValue(sql));
+            return dt;
+        }
+
+        //--------------------------------------USER PANEL
+
+        public DataTable GetActiveCountry(string usr)
+        {
+            DataTable dt = new DataTable("dt");
+            //string sql = "select s.countrycode,c.name + ' - ' + s.countrycode as name from smsrateaspercountry s inner join countryMast c ON s.countrycode = c.phonecode where s.username ='" + usr + "'";
+            string sql = "select c.phonecode as countrycode,c.name +' - ' +cast(c.phonecode as varchar) as name from countryMast c";
+
+
+            dt = database.GetDataTable(sql);
+            return dt;
+        }
+
+        public DataTable GetSenderId(string usr, string ccode = "")
+        {
+            DataTable dt = new DataTable("dt");
+            string sql = "Select Senderid from senderidmast where userid='" + usr + "'";
+            if (ccode != "")
+            {
+                sql = sql + " and countrycode='" + ccode + "'";
+            }
+            sql = sql + " order by 1";
+
+            dt = database.GetDataTable(sql);
+            return dt;
+        }
+        public DataTable GetSMSType(string usr)
+        {
+            DataTable dt = new DataTable("dt");
+            string sql = @"SELECT 'Premium' AS SMSTYPE, '1' AS SMSVAL
+                            UNION ALL
+                            SELECT 'Link Text' AS SMSTYPE, '2' AS SMSVAL 
+                            UNION ALL
+                            SELECT 'Google RCS' AS SMSTYPE, '7' AS SMSVAL 
+                            UNION ALL
+                            SELECT 'Flash SMS' AS SMSTYPE, '8' AS SMSVAL 
+                            UNION ALL
+                            SELECT 'Promotional' AS SMSTYPE, '6' AS SMSVAL ";
+            if (Convert.ToInt16(database.GetScalarValue("Select count(*) from customer with(nolock) where username='" + usr + "' and campaign_applicable=1 ")) > 0)
+                sql = sql + @" UNION ALL 
+                SELECT 'Campaign' AS SMSTYPE, '3' AS SMSVAL ";
+
+            //sql = sql + @" UNION ALL SELECT 'Flash SMS' AS SMSTYPE, '5' AS SMSVAL ";
+
+            //sql = sql + @" UNION ALL 
+            //    SELECT 'Campaign' AS SMSTYPE, '3' AS SMSVAL ";
+            dt = database.GetDataTable(sql);
+            return dt;
+        }
+        public Int32 GetUrlID(string UserID, string segm)
+        {
+            Int32 s = Convert.ToInt32(database.GetScalarValue("select id from short_urls where segment='" + segm + "' and userid = '" + UserID + "'"));
+            return s;
+        }
+
+        public string NewSegment8()
+        {
+            string segment = Guid.NewGuid().ToString().Substring(0, 8);
+            return segment;
+        }
+
+        public DataTable GetCampaignAccounts()
+        {
+            DataTable dt = new DataTable("dt");
+            string sql = @"SELECT SMPPACCOUNTID FROM SMPPSETTING WHERE FORCAMPAIGN=1 AND ACTIVE=1";
+            dt = database.GetDataTable(sql);
+            return dt;
+        }
+
+        public DataTable GetPromotionAccounts()
+        {
+            DataTable dt = new DataTable("dt");
+            string sql = @"SELECT SMPPACCOUNTID FROM SMPPSETTING WHERE Forpromotional=1 AND ACTIVE=1";
+            dt = database.GetDataTable(sql);
+            return dt;
+        }
+
+        public DataTable GetGoogleRCSAccounts()
+        {
+            DataTable dt = new DataTable("dt");
+            string sql = @"SELECT SMPPACCOUNTID FROM SMPPSETTING WHERE ForRCS=1 AND ACTIVE=1";
+            dt = database.GetDataTable(sql);
+            return dt;
+        }
+        public DataTable GetFlashSMSAccounts()
+        {
+            DataTable dt = new DataTable("dt");
+            string sql = @"SELECT SMPPACCOUNTID FROM SMPPSETTING WHERE ForFlash=1 AND ACTIVE=1";
+            dt = database.GetDataTable(sql);
+            return dt;
+        }
+
+        public string GetUniversalTemplateId()
+        {
+            return Convert.ToString(database.GetScalarValue("select universalTempId from settings"));
+        }
+
+        public string GetSqlAccounts(DataTable dtAc)
+        {
+            string sql = "";
+            if (dtAc.Rows.Count > 0)
+            {
+                sql = "Select n.sessionid as smppaccountid, s.PDUSIZE,s.PROVIDER,s.ACCOUNTTYPE,s.HOSTNAME,s.PORT,s.USESSL,s.SYSTEMID,s.PASSWORD,s.BINDINGMODE,s.SYSTEMTYPE,s.ADDRESS_TON,s.ADDRESS_NPI,s.SOURCE_ADDRESS,s.TON_S,s.NPI_S,s.SERVICE,s.DESTNATION_ADDRESS,s.TON_D,s.NPI_D,s.DATACODING,s.MODE,s.CREATEDAT,s.ACTIVE " +
+                " from smppsetting s inner join smppsession n on s.smppaccountid=n.smppaccountid where n.active=1 and S.ACTIVE=1 AND isnull(s.dltno,'') = '" + dtAc.Rows[0]["DLTNO"].ToString() + "' ";
+                if (dtAc.Rows[0]["GSM"].ToString() == "Y")
+                    sql = sql + " and s.smppaccountid in (" + dtAc.Rows[0]["smppaccountidall"].ToString() + ") ";
+                else
+                    sql = sql + " and s.smppaccountid = '" + dtAc.Rows[0]["smppaccountid"].ToString() + "'  ";   //and right(n.sessionid,2)<>'05'
+            }
+            else
+                sql = "Select n.sessionid as smppaccountid, s.PDUSIZE,s.PROVIDER,s.ACCOUNTTYPE,s.HOSTNAME,s.PORT,s.USESSL,s.SYSTEMID,s.PASSWORD,s.BINDINGMODE,s.SYSTEMTYPE,s.ADDRESS_TON,s.ADDRESS_NPI,s.SOURCE_ADDRESS,s.TON_S,s.NPI_S,s.SERVICE,s.DESTNATION_ADDRESS,s.TON_D,s.NPI_D,s.DATACODING,s.MODE,s.CREATEDAT,s.ACTIVE " +
+                " from smppsetting s inner join smppsession n on s.smppaccountid=n.smppaccountid where s.active=1 and n.active=1 AND isnull(s.dltno,'') = '' and s.forfile='1' ";
+            return sql;
+        }
+
+        public string GetTemplateTestAccounts()
+        {
+            string sql = "Select top 1 n.sessionid as smppaccountid from smppsetting s inner join smppsession n " +
+                          "ON s.smppaccountid=n.smppaccountid and s.ACTIVE=n.ACTIVE " +
+                          "where n.active = 1 and S.ACTIVE = 1 and s.forfile = 1";
+            return Convert.ToString(database.GetScalarValue(sql));
+
+        }
+
+        public void checkNumberDigitsAndUpdate(string user, string colnm)
+        {
+            Int32 cn14 = Convert.ToInt32(database.GetScalarValue("Select max(len([" + colnm + "])) from " + user));
+            if (cn14 > 12)
+            {
+                database.ExecuteNonQuery("Update " + user + " set [" + colnm + "] = right([" + colnm + "],12)");
+            }
+        }
+
+        public void GetSchedule_SMS(List<string> liScheduleDates, string userId, string country_code)
+        {
+            string q1 = "select defaultCountry from CUSTOMER with(nolock) where username='" + userId + "' ";
+            double timedifferenceInMinute = Convert.ToDouble(database.GetScalarValue("select timedifferenceInMinute from tblCountry where counryCode in (" + q1 + ")"));
+
+            string firstsch = liScheduleDates.FirstOrDefault();
+
+            string firstSchdate = Convert.ToDateTime(firstsch, CultureInfo.InvariantCulture).AddMinutes(Math.Abs(timedifferenceInMinute)).ToString("yyyy-MM-dd HH:mm", CultureInfo.InvariantCulture);
+
+            string sqlTemp = string.Format("Select * into #tempSchedule From MsgSchedule where CONVERT(varchar(16),schedule,20)='{0}' AND createdat > dateadd(minute, -30, GetDate()) AND PROFILEID='{1}'", firstSchdate, userId);
+            string sql1 = "";
+            foreach (string scheduleDate in liScheduleDates.Skip(1))
+            {
+                //  sql1 += string.Format("update #tempSchedule set schedule='{0}';", scheduleDate);
+
+                sql1 += "INSERT INTO MsgSchedule(PROVIDER,SMPPACCOUNTID,PROFILEID,MSGTEXT,TOMOBILE,SENDERID,SCHEDULE,MOBTRK,SHORTURL,URLID,NEWSEGMENT,SMSRATE,SMSTYPE,DOMAIN,FILEID,peid,DATACODE,blacklist,TemplateID,msgid,blockno,blockfail,ERR_CODE) " +
+                        " SELECT PROVIDER,SMPPACCOUNTID,PROFILEID,MSGTEXT,TOMOBILE,SENDERID,dateadd(minute, " + Convert.ToString(Math.Abs(timedifferenceInMinute)) + ", '" + scheduleDate + "'),MOBTRK,SHORTURL,URLID,NEWSEGMENT,SMSRATE,SMSTYPE,DOMAIN,FILEID,peid,DATACODE,blacklist,TemplateID,msgid,blockno,blockfail,ERR_CODE from #tempSchedule ;";
+                // sql1 += " TRUNCATE TABLE #tempSchedule ";
+                double bal = CalculateSMSCost(noof_message, msg_rate);
+                // double bal = CalculateAmount(userId, noof_message, msg_rate, 1);
+                sql1 = sql1 + " ;update customer set balance = balance - '" + bal + "' where username = '" + userId + "'";
+            }
+            string sql = string.Format("{0} ; {1}", sqlTemp, sql1);
+            try
+            {
+                database.ExecuteNonQuery(sql);
+            }
+            catch (Exception ex)
+            {
+                LogError("Error in GetSchedule_SMS method !  ", ex.Message + " - " + ex.StackTrace);
+                throw ex;
+            }
+        }
+
+        // --->-----------------SMS SENDING METHODS ---------------
+        public void Schedule_SMS(string UserID, string mobile, string msg, string s, string schdate, int shortURLId, string shortURL, string domain, string segment, double rate, string SMSType, DataTable dtAc, bool ucs2, string TemplateID, string country_code)
+        {
+            mobile = country_code + mobile;
+            if (mobile.Length > 12)
+                mobile = mobile.Substring(mobile.Length - 12);
+            //change SMPP ACCOUNT based on SMSTYPE
+            msg = msg.Replace("'", "''");
+            string ACid = "101";
+
+            if (dtAc.Rows.Count > 0) ACid = dtAc.Rows[0]["SMPPACCOUNTID"].ToString() + "01";
+            string peid = getPEid(UserID);
+
+            bool b = checkblacklistno(UserID, mobile);
+            //if(b) b= checkwhitelistno(UserID, mobile);
+
+            string dataCode = "";
+            if (SMSType == "8")
+            {
+                if (ucs2)
+                    dataCode = "UnicodeFlashSMS";
+                else
+                    dataCode = "DefaultFlashSMS";
+            }
+            else
+            {
+                if (ucs2)
+                    dataCode = "UCS2";
+                else
+                    dataCode = "Default";
+            }
+
+            string q1 = "select defaultCountry from CUSTOMER with(nolock) where username='" + UserID + "' ";
+            int timedifferenceInMinute = Convert.ToInt32(database.GetScalarValue("select timedifferenceInMinute from tblCountry where counryCode in(" + q1 + ")"));
+            //RACHIT 03-02-22
+            // --->>
+            //string sql = @"INSERT INTO MsgSchedule (PROVIDER,SMPPACCOUNTID,PROFILEID,MSGTEXT,TOMOBILE,SENDERID,CREATEDAT,SCHEDULE,MOBTRK,SHORTURL,URLID,NEWSEGMENT,SMSRATE,SMSTYPE,DOMAIN,peid,datacode,blacklist,TemplateID)
+            //VALUES ('VCON','" + ACid + "','" + UserID + "',N'" + msg + "','" + mobile + "','" + s + "',GETDATE(),dateadd(minute, " + Convert.ToString(Math.Abs(timedifferenceInMinute)) + ", '" + schdate + "'),'" +
+            //(shortURLId > 0 ? "Y" : "N") + "','" + shortURL + "','" + shortURLId.ToString() + "','" + segment + "','" + rate.ToString() + "','" + SMSType + "','" + domain + "','" + peid + "','" + dataCode + "','" + (b ? 1 : 0) + "','" + TemplateID + "')";
+
+            string sql = " Insert into SMSFILEUPLOAD (USERID,senderid,schedule,campaignname,SMSRATE,shortURLId,COUNTRYCODE) values ('" + UserID + "','" + s + "','" + schdate + "','Manual','" + rate + "','" + Convert.ToString(shortURLId) + "','" + country_code + "')" +
+                  " declare @id numeric(10) select @id = max(id) from SMSFILEUPLOAD where userid='" + UserID + "' ;";
+
+            sql = sql + @" INSERT INTO MsgSchedule (PROVIDER,SMPPACCOUNTID,PROFILEID,MSGTEXT,TOMOBILE,SENDERID,CREATEDAT,SCHEDULE,MOBTRK,SHORTURL,URLID,NEWSEGMENT,SMSRATE,SMSTYPE,DOMAIN,peid,datacode,blacklist,TemplateID,FILEID)
+            VALUES ('VCON','" + ACid + "','" + UserID + "',N'" + msg + "','" + mobile + "','" + s + "',GETDATE(),dateadd(minute, " + timedifferenceInMinute + ", '" + schdate + "'),'" +
+            (shortURLId > 0 ? "Y" : "N") + "','" + shortURL + "','" + shortURLId.ToString() + "','" + segment + "','" + rate.ToString() + "','" + SMSType + "','" + domain + "','" + peid + "','" + dataCode + "','" + (b ? 1 : 0) + "','" + TemplateID + "',@id)";
+            // <<----
+
+
+            double bal = CalculateSMSCost(noof_message, Convert.ToDouble(rate));
+            //  double bal = CalculateAmount(UserID, noof_message, Convert.ToDouble(rate), 1);
+            sql = sql + " update customer set balance = balance - '" + bal + "' where username = '" + UserID + "'";
+            try
+            {
+                database.ExecuteNonQuery(sql);
+            }
+            catch (Exception ex)
+            {
+                LogError("Error in Schedule_SMS method !  ", ex.Message + " - " + ex.StackTrace);
+                throw ex;
+            }
+        }
+
+        public void SendURL_SMS(string UserID, string mobile, string msg, string s, DataTable dtAc, bool ucs2, bool bulk, double rate, int noofsms, string TemplateID, string countryCode, string SMSType, string fileId = "")
+        {
+            mobile = countryCode + mobile;
+            if (mobile.Length > 12)
+                mobile = mobile.Substring(mobile.Length - 12);
+            //change SMPP ACCOUNT based on SMSTYPE
+            string peid = getPEid(UserID);
+            msg = msg.Replace("'", "''");
+            string ACid = "";
+            if (bulk)
+            {
+                ACid = "105";
+                if (dtAc.Rows.Count > 0) ACid = dtAc.Rows[0]["SMPPACCOUNTID"].ToString() + "01";
+            }
+            else
+            {
+                ACid = "301";
+                if (dtAc.Rows.Count > 0) ACid = dtAc.Rows[0]["SMPPACCOUNTID"].ToString() + "05";
+            }
+            string sql = "";
+
+            if (checkblacklistno(UserID, mobile))
+            {
+                sql = @"DECLARE @nid varchar (100)  ";
+                for (int x = 0; x < noofsms; x++)
+                {
+                    string smsTex = GetSMSText(msg, x + 1, noofsms, ucs2);
+                    sql = sql + @" select @nid=newid()
+                    Insert into msgsubmitted(ID, PROVIDER, SMPPACCOUNTID, PROFILEID, MSGTEXT, TOMOBILE, SENDERID, CREATEDAT, SENTDATETIME, MSGID, INSERTDATE, FILEID, NSEND, smstext, smsrate) " +
+                    " select '1' as id,'vcon','" + ACid + "','" + UserID + "',N'" + smsTex + "','" + mobile + "' as TOMOBILE,'" + s + "',GETDATE(),GETDATE(),@nid,getdate(),'" + fileId + "' as fileid,'1'," +
+                    " N'" + msg + "','" + rate.ToString() + "' from settings ; " +
+                    " Insert into delivery (DLVRTEXT,MSGID,DLVRTIME,DLVRSTATUS,err_code,INSERTDATE) " +
+                    @" select 'id:' + @nid + ' sub:001 dlvrd:001 submit date:' + RIGHT(cONVERT(VARCHAR,getdate(),112),6) + REPLACE(cONVERT(VARCHAR,getdate(),108),':','') + 
+                    ' done date:' + RIGHT(cONVERT(VARCHAR, GETDATE(), 112), 6) + REPLACE(cONVERT(VARCHAR, GETDATE(), 108), ':', '') + ' stat:BlackList err:250 text:' AS DLVRTEXT, @nid, GETDATE(), 'BlackList','250',getdate()
+                    FROM settings ";
+                }
+            }
+            else
+            {
+                string st1 = checMobProcessNo(UserID, mobile);
+                if (st1 != "")
+                {
+                    string[] st2 = st1.Split(';');
+
+                    for (int x = 0; x < noofsms; x++)
+                    {
+                        string smsTex = GetSMSText(msg, x + 1, noofsms, ucs2);
+                        sql = sql + @" select @nid=newid()
+                        Insert into msgsubmitted(ID, PROVIDER, SMPPACCOUNTID, PROFILEID, MSGTEXT, TOMOBILE, SENDERID, CREATEDAT, SENTDATETIME, MSGID, INSERTDATE, FILEID, NSEND, smstext, smsrate) " +
+                        " select '1' as id,'vcon','" + ACid + "','" + UserID + "',N'" + smsTex + "','" + mobile + "' as TOMOBILE,'" + s + "',GETDATE(),GETDATE(),@nid,getdate(),'" + fileId + "' as fileid,'1'," +
+                        " N'" + msg + "','" + rate.ToString() + "' from settings ; ";
+                        if (st2[1] == "F")
+                        {
+                            sql = sql + @" Insert into delivery (DLVRTEXT,MSGID,DLVRTIME,DLVRSTATUS,err_code,INSERTDATE) " +
+                            @" select 'id:' + @nid + ' sub:001 dlvrd:000 submit date:' + RIGHT(cONVERT(VARCHAR,getdate(),112),6) + REPLACE(cONVERT(VARCHAR,getdate(),108),':','') + 
+                            ' done date:' + RIGHT(cONVERT(VARCHAR, GETDATE(), 112), 6) + REPLACE(cONVERT(VARCHAR, GETDATE(), 108), ':', '') + ' stat:UNDELIV err:" + st2[0] + @" text:' AS DLVRTEXT, @nid, GETDATE(), 'Undeliverable','" + st2[0] + @"',getdate()
+                            FROM settings ";
+                        }
+                        else
+                        {
+                            sql = sql + @" Insert into delivery (DLVRTEXT,MSGID,DLVRTIME,DLVRSTATUS,err_code,INSERTDATE) " +
+                            @" select 'id:' + @nid + ' sub:001 dlvrd:001 submit date:' + RIGHT(cONVERT(VARCHAR,getdate(),112),6) + REPLACE(cONVERT(VARCHAR,getdate(),108),':','') + 
+                            ' done date:' + RIGHT(cONVERT(VARCHAR, GETDATE(), 112), 6) + REPLACE(cONVERT(VARCHAR, GETDATE(), 108), ':', '') + ' stat:DELIVRD err:000 text:' AS DLVRTEXT, @nid, GETDATE(), 'Delivered','000',getdate()
+                            FROM settings ";
+                        }
+                    }
+                }
+
+                string dataCode = "";
+                if (SMSType == "8")
+                {
+                    if (ucs2)
+                        dataCode = "UnicodeFlashSMS";
+                    else
+                        dataCode = "DefaultFlashSMS";
+                }
+                else
+                {
+                    if (ucs2)
+                        dataCode = "UCS2";
+                    else
+                        dataCode = "Default";
+                }
+
+                // sql = string.Format("if exists (select * from sys.tables where name = '{0}') drop table {1}", UserID, UserID);
+                string strsql = string.Format(" Create table {0} (MobNo varchar(15) )", UserID);
+
+                database.ExecuteNonQuery(strsql);
+                sql = @"INSERT INTO [dbo].";
+                //sql = @"INSERT INTO [dbo].[MSGTRAN]
+                //([PROVIDER],[SMPPACCOUNTID],[PROFILEID],[MSGTEXT],[TOMOBILE],[SENDERID],[CREATEDAT],[PICKED_DATETIME],[peid],[DATACODE],[smsrate],[TemplateID],FILEID) VALUES
+                //('BSNL', '" + ACid + "', '" + UserID + @"',N'" + msg.Trim() + @"', '" + mobile + @"', '" + s + @"', GETDATE(), NULL,'" + peid + "','" + dataCode + "','" + rate.ToString() + "','" + TemplateID + "','" + fileId + "')";
+            }
+
+            // double bal = CalculateAmount(UserID, noof_message, Convert.ToDouble(rate), smscount);
+            double bal = CalculateSMSCost(noof_message, Convert.ToDouble(rate));
+
+            sql = sql + " update customer set balance = balance - '" + bal + "' where username = '" + UserID + "'";
+
+            try
+            {
+                database.ExecuteNonQuery(sql);
+            }
+            catch (Exception ex)
+            {
+                LogError("Error in SendURL_SMS method !  ", ex.Message + " - " + ex.StackTrace);
+                throw ex;
+            }
+
+        }
+
+        public void Schedule_SMS_BULK(string UserID, string msg, string s, string schdate, int shortURLId, string shortURL, string domain, double rate, string SMSType, string filenm, string filenmext, DataTable dtAc, string campnm, bool ucs2, List<string> mobList, string manual, string TemplateID, string country_code, double PrevBalance = 0, double AvailableBalance = 0, string tmpfilenm = "")
+        {
+            string user = "tmp_" + UserID;
+
+            if (manual == "MANUAL")
+            {
+                database.ExecuteNonQuery("if exists (select * from sys.tables where name='" + user + @"') drop table " + user + @"; Create table " + user + @" (MobileNo numeric) ;  ");
+                foreach (var m in mobList)
+                {
+                    database.ExecuteNonQuery(" Insert into " + user + @" values ('" + m + "')");
+                }
+                database.ExecuteNonQuery("delete d from " + user + @" d inner join globalBlackListNo b on b.mobile=d.MobileNo ");
+                /*rabi 14 jul 21*/
+                database.ExecuteNonQuery(" if exists(select * from smsrestrictmobile srm join [smsrestriction] sr on srm.smsrestrictionid=sr.id where userid='" + UserID + "' AND TYPE='U') delete d from " + user + @" d inner join SMSRestrictmobile SRM on SRM.MobileNo='91'+d.MobileNo  join [SMSRestriction] SR on SRM.SMSRestrictioniD=SR.Id  WHERE UserId='" + UserID + "' AND TYPE='U' if exists(select * from smsrestrictmobile srm join [smsrestriction] sr on srm.smsrestrictionid=sr.id where SenderId='" + s + "' AND TYPE='S') delete d from " + user + @" d inner join SMSRestrictmobile SRM on SRM.MobileNo='91'+d.MobileNo  join [SMSRestriction] SR on SRM.SMSRestrictioniD=SR.Id  WHERE SenderId='" + s + "' AND TYPE='S'");
+            }
+
+
+            string q1 = "select defaultCountry from CUSTOMER with(nolock) where username='" + UserID + "' ";
+            int timedifferenceInMinute = Convert.ToInt32(database.GetScalarValue("select timedifferenceInMinute from tblCountry where counryCode in(" + q1 + ")"));
+
+
+            string colnm = Convert.ToString(database.GetScalarValue("if exists (select * from sys.tables where name='" + user + @"') select column_name From information_schema.columns where table_name = '" + user + @"' and ordinal_position = 1 else select '' "));
+
+            string sqlUpd = "if exists (select * from sys.tables where name='" + user + @"') update " + user + @" set [" + colnm + "] = '" + country_code + "'+convert(varchar,convert(bigint,[" + colnm + "])) ";
+            database.ExecuteNonQuery(sqlUpd);
+
+            checkNumberDigitsAndUpdate(user, colnm);
+
+            string sql = GetSqlAccounts(dtAc);
+
+            DataTable dt = database.GetDataTable(sql);
+
+            Int32 rowcnt = Convert.ToInt32(database.GetScalarValue("if exists (select * from sys.tables where name='" + user + @"') select count(*) from " + user + @" else select 0 "));
+
+            dt.Columns.Add("cnt", typeof(string));
+
+            int totalPDU = 0;
+            for (int i = 0; i < dt.Rows.Count; i++) totalPDU += Convert.ToInt16(dt.Rows[i]["PDUSIZE"]);
+            Int32 totcnt = 0;
+            for (int i = 0; i < dt.Rows.Count; i++)
+            {
+                double per = (Convert.ToDouble(dt.Rows[i]["PDUSIZE"]) * 100) / Convert.ToDouble(totalPDU);
+                Int32 cntrow = Convert.ToInt32(rowcnt * (per / 100));
+                totcnt += cntrow;
+                dt.Rows[i]["cnt"] = cntrow.ToString();
+            }
+            int dif = 0;
+            if (totcnt < rowcnt)
+            {
+                dif = rowcnt - totcnt;
+                for (int i = 0; i < dt.Rows.Count; i++)
+                    dt.Rows[i]["cnt"] = Convert.ToString(Convert.ToInt32(dt.Rows[i]["cnt"]) + 1);
+            }
+            //Int32 cnt = (rowcnt / dt.Rows.Count);
+            //if (rowcnt % dt.Rows.Count > 0) cnt++;
+            database.ExecuteNonQuery("IF not EXISTS(SELECT 1 FROM sys.columns WHERE Name = N'SMPPACCOUNTID' AND Object_ID = Object_ID(N'" + user + "')) " +
+                " alter table " + user + @" add smppaccountid numeric(10)"); //add new column
+
+            //  database.ExecuteNonQuery("alter table " + user + @" add smppaccountid numeric(10) ");
+
+            for (int i = 0; i < dt.Rows.Count; i++)
+            {
+                sql = "update top (" + dt.Rows[i]["cnt"].ToString() + ") " + user + @" set smppaccountid = '" + dt.Rows[i]["smppaccountid"].ToString() + "' where smppaccountid is null ";
+                database.ExecuteNonQuery(sql);
+            }
+            double CampaignCost = PrevBalance - AvailableBalance;
+            //change SMPP ACCOUNT based on SMSTYPE
+            msg = msg.Replace("'", "''");
+            string peid = getPEid(UserID);
+            sql = @"Insert into SMSFILEUPLOAD (USERID,FILENM,EXTENSION,RECCOUNT,senderid,schedule,campaignname,SMSRATE,shortURLId,PrevBalance,CampaignCost,AvailableBalance,tmpFN,COUNTRYCODE) values ('" + UserID + "','" + filenm + "','" + filenmext + "','" + rowcnt.ToString() + "','" + s + "','" + schdate + "','" + campnm + "','" + rate + "','" + Convert.ToString(shortURLId) + "','" + PrevBalance + "','" + CampaignCost + "','" + AvailableBalance + "','" + tmpfilenm + "','" + country_code + "') " +
+                " declare @id numeric(10) select @id = max(id) from SMSFILEUPLOAD where userid='" + UserID + "' ; " +
+                " INSERT INTO MsgSchedule (PROVIDER,SMPPACCOUNTID,PROFILEID,MSGTEXT,TOMOBILE,SENDERID,CREATEDAT,SCHEDULE,MOBTRK,SHORTURL,URLID,NEWSEGMENT,SMSRATE,SMSTYPE,DOMAIN,FILEID,peid,DATACODE,blacklist,TemplateID) " +
+            " select 'VCON',u.smppaccountid,'" + UserID + "',N'" + msg + "',u.[" + colnm + "] as TOMOBILE,'" + s + "',GETDATE(),dateadd(minute, " + Convert.ToString(Math.Abs(timedifferenceInMinute)) + ", '" + schdate + "'),'" +
+            (shortURLId > 0 ? "Y" : "N") + "','" + shortURL + "','" + shortURLId.ToString() + "'," + (shortURLId > 0 ? "left(NEWID(),8)" : "null") + ",'" + rate.ToString() + "','" + SMSType + "','" +
+            domain + "',@id,'" + peid + "','" + (ucs2 ? "UCS2" : "Default") + "',case when b.mobileno is not null then 1 else 0 end as blacklist,'" + TemplateID + "' as TemplateID from " + user + " u left join blacklistno b on u.[" + colnm + "]=b.mobileno and b.userid='" + UserID + "' where u.[" + colnm + "] is not null ; ";
+
+            double Bper = GetBlockSMSper(UserID, "B");
+            if (Bper != 0)
+            {
+                Int32 cnt20 = Convert.ToInt32(Convert.ToDouble(rowcnt) * Bper);
+                sql = sql + " update top (" + cnt20 + ") MsgSchedule set blockno=1 where profileid='" + UserID + "' and schedule=dateadd(minute, " + Convert.ToString(Math.Abs(timedifferenceInMinute)) + ", '" + schdate + "') and isnull(blacklist,0)=0 and fileid=@id and Tomobile not in (" + getWhiteListNo(UserID) + ") ";
+            }
+            double Fper = GetBlockSMSper(UserID, "F");
+            if (Fper != 0)
+            {
+                Int32 cnt20 = Convert.ToInt32(Convert.ToDouble(rowcnt) * Fper);
+                sql = sql + " update top (" + cnt20 + ") MsgSchedule set blockfail=1 where profileid='" + UserID + "' and schedule=dateadd(minute, " + Convert.ToString(Math.Abs(timedifferenceInMinute)) + ", '" + schdate + "') and isnull(blacklist,0)=0 AND isnull(BLOCKNO,0)=0 and fileid=@id and Tomobile not in (" + getWhiteListNo(UserID) + ") ";
+            }
+            bool ClkBlk = ClickListUser(UserID);
+            string isdlr = "";
+            if ((ClkBlk && SMSType == "2") || (ClkBlk && (SMSType == "3" || SMSType == "6") && shortURLId > 0))
+            {
+                DataTable dtCl = database.GetDataTable("Select * from ClickDataBlock where userid='" + UserID + "'");
+                string noofdays = dtCl.Rows[0]["noofdays"].ToString();
+                isdlr = dtCl.Rows[0]["ProcessType"].ToString();
+                sql = sql + " select t.* into #t12 from MsgSchedule t inner join MobTrackURL m on m.urlid='" + shortURLId.ToString() + "' and t.TOMOBILE=m.mobile inner join (select distinct urlid from mobstats where shorturl_id='" + shortURLId.ToString() + "') s on m.id=s.urlid where t.profileid='" + UserID + "' and t.schedule=dateadd(minute, " + Convert.ToString(Math.Abs(timedifferenceInMinute)) + ", '" + schdate + "') and m.sentdate >= DateAdd(Day,-" + noofdays + ",getdate()) ";
+
+                if (isdlr.ToUpper() == "DELIVERED")
+                {
+                    sql = sql + " update MsgSchedule set blockno=1 where profileid='" + UserID + "' and schedule=dateadd(minute, " + Convert.ToString(Math.Abs(timedifferenceInMinute)) + ", '" + schdate + "') and tomobile in (select tomobile from #t12) ";
+                }
+                if (isdlr.ToUpper() == "NOSUBMISSION")
+                {
+                    sql = sql + " delete d from MsgSchedule d inner join #t12 t on d.tomobile = t.tomobile  where d.profileid='" + UserID + "' and d.schedule=dateadd(minute, " + Convert.ToString(Math.Abs(timedifferenceInMinute)) + ", '" + schdate + "') ;  ";
+                }
+            }
+            if (SMSType == "2" || ((SMSType == "3" || SMSType == "6") && shortURLId > 0))
+            {
+                sql = sql + "; Update MsgSchedule set MSGTEXT=replace(MSGTEXT,shorturl,domain+newsegment) where PROFILEID='" + UserID + "' and SCHEDULE=dateadd(minute, " + Convert.ToString(Math.Abs(timedifferenceInMinute)) + ", '" + schdate + "') ; ";
+            }
+
+            bool isMobProcess = MobProcessUser(UserID);
+            if (isMobProcess)
+            {
+                //PROCESS 
+                sql = sql + "Update Msgschedule set blockno=1 from msgschedule m inner join BLOCKSMSERROR s with (nolock) on s.profileid=m.profileid inner join UserMobile b with (nolock) on m.tomobile=b.tomobile and m.profileid=b.profileid AND B.ERR_CODE=S.ERR_CODE where m.profileid='" + UserID + "' and m.schedule=dateadd(minute, " + Convert.ToString(Math.Abs(timedifferenceInMinute)) + ", '" + schdate + "') and s.DORF='D' ; ";
+                sql = sql + "Update Msgschedule set blockfail=1,ERR_CODE=S.ERR_CODE from msgschedule m inner join BLOCKSMSERROR s with (nolock) on s.profileid=m.profileid inner join UserMobile b with (nolock) on m.tomobile=b.tomobile and m.profileid=b.profileid AND B.ERR_CODE=S.ERR_CODE where m.profileid='" + UserID + "' and m.schedule=dateadd(minute, " + Convert.ToString(Math.Abs(timedifferenceInMinute)) + ", '" + schdate + "') and s.DORF='F' ; ";
+            }
+
+            // double bal = CalculateAmount(UserID, noof_message, Convert.ToDouble(rate), smscount);
+            double bal = CalculateSMSCost(noof_message, Convert.ToDouble(rate));
+            sql = sql + " update customer set balance = balance - '" + bal + "' where username = '" + UserID + "'";
+
+            try
+            {
+                database.ExecuteNonQuery(sql);
+            }
+            catch (Exception ex)
+            {
+                LogError("Error in Schedule_SMS_BULK method !  ", ex.Message + " - " + ex.StackTrace);
+                throw ex;
+            }
+        }
+
+        public void InsertTemplateSMSrecordsFromUSERTMP(string userId, string s, string SMSType, string msg, string filenm, string filenmext, DataTable dtAc, DataTable dtCols, ListBox lstMappedFields, string campnm, bool ucs2, double rate, int noofsms, string schdate, List<string> tempFields, string TemplateID, string country_code, string shUrl = "", string domName = "", int shortURLId = 0, double PrevBalance = 0, double AvailableBalance = 0, string tmpfilenm = "")
+        {
+            string user1 = "tmp1_" + userId;
+            string user = "tmp_" + userId;
+            string colnm = "";
+            string sql = "";
+            string peid = getPEid(userId);
+
+            string dataCode = "";
+            if (SMSType == "8")
+            {
+                if (ucs2)
+                    dataCode = "UnicodeFlashSMS";
+                else
+                    dataCode = "DefaultFlashSMS";
+            }
+            else
+            {
+                if (ucs2)
+                    dataCode = "UCS2";
+                else
+                    dataCode = "Default";
+            }
+
+            sql = @"if exists (select * from sys.tables where name='" + user + @"') drop table " + user + @" ;
+                SELECT * INTO " + user + @" FROM " + user1;
+            database.ExecuteNonQuery(sql);
+            colnm = Convert.ToString(database.GetScalarValue("select column_name From information_schema.columns where table_name = '" + user1 + @"' and ordinal_position = 1 "));
+            database.ExecuteNonQuery("update " + user + @" set [" + colnm + "] = '" + country_code + "'+convert(varchar,convert(bigint,[" + colnm + "])) ");
+
+            checkNumberDigitsAndUpdate(user, colnm);
+
+            sql = GetSqlAccounts(dtAc);
+            DataTable dt = database.GetDataTable(sql);
+
+            Int32 rowcnt = Convert.ToInt32(database.GetScalarValue("if exists (select * from sys.tables where name='" + user + @"') select count(*) from " + user + @" else select 0 "));
+
+            dt.Columns.Add("cnt", typeof(string));
+
+            int totalPDU = 0;
+            for (int i = 0; i < dt.Rows.Count; i++) totalPDU += Convert.ToInt16(dt.Rows[i]["PDUSIZE"]);
+            Int32 totcnt = 0;
+            for (int i = 0; i < dt.Rows.Count; i++)
+            {
+                double per = (Convert.ToDouble(dt.Rows[i]["PDUSIZE"]) * 100) / Convert.ToDouble(totalPDU);
+                Int32 cntrow = Convert.ToInt32(rowcnt * (per / 100));
+                totcnt += cntrow;
+                dt.Rows[i]["cnt"] = cntrow.ToString();
+            }
+            int dif = 0;
+            if (totcnt < rowcnt)
+            {
+                dif = rowcnt - totcnt;
+                for (int i = 0; i < dt.Rows.Count; i++)
+                    dt.Rows[i]["cnt"] = Convert.ToString(Convert.ToInt32(dt.Rows[i]["cnt"]) + 1);
+            }
+            //Int32 cnt = (rowcnt / dt.Rows.Count);
+            //if (rowcnt % dt.Rows.Count > 0) cnt++;
+            database.ExecuteNonQuery("IF not EXISTS(SELECT 1 FROM sys.columns WHERE Name = N'SMPPACCOUNTID' AND Object_ID = Object_ID(N'" + user + "')) " +
+                " alter table " + user + @" add smppaccountid numeric(10) , shortsegment varchar(10) "); //add new column
+
+            for (int i = 0; i < dt.Rows.Count; i++)
+            {
+                sql = "update top (" + dt.Rows[i]["cnt"].ToString() + ") " + user + @" set smppaccountid = '" + dt.Rows[i]["smppaccountid"].ToString() + "' where smppaccountid is null ";
+                database.ExecuteNonQuery(sql);
+            }
+
+            if (shUrl != "") database.ExecuteNonQuery("update " + user + @" set shortsegment=left(NEWID(),8) ");
+
+            //prepare query with template msg text and field value
+            string m = msg.Replace("'", "''");
+            if (lstMappedFields.Items.Count > 0)
+            {
+                foreach (ListItem li in lstMappedFields.Items)
+                {
+                    string[] s1 = li.Text.Replace(" ---->> ", "$").Split('$');
+
+                    string coltype = Convert.ToString(database.GetScalarValue("SELECT DATA_TYPE FROM INFORMATION_SCHEMA.COLUMNS WHERE TABLE_NAME = '" + user + @"' and COLUMN_NAME = '" + s1[1] + "'"));
+                    if (coltype.ToUpper().Contains("DATE"))
+                        m = m.Replace(s1[0], "' + convert(varchar,[" + s1[1] + "],106) + N'");
+                    else if (coltype.ToUpper().Contains("FLOAT"))
+                        m = m.Replace(s1[0], "' + CONVERT(nvarchar(255), LTRIM(RTRIM(str(ISNULL([" + s1[1] + "], 0), 20, 0)))) + N'");
+                    else
+                        m = m.Replace(s1[0], "' + convert(nvarchar(max),[" + s1[1] + "]) + N'");
+                    //m = m.Replace(s1[0], "' + [" + s1[1] + "] + N'");
+                }
+            }
+            for (int j = 0; j < tempFields.Count; j++)
+                m = m.Replace(tempFields[j], ""); filenm = filenm.Replace("'", "''");
+
+            double CampaignCost = PrevBalance - AvailableBalance;
+
+            if (schdate == "")
+            {
+                //2 feb change ccode
+                sql = @"if exists (select * from sys.tables where name='" + user + @"')  " +
+                    " begin " +
+                    " Insert into SMSFILEUPLOAD (USERID,FILENM,EXTENSION,RECCOUNT,senderid,campaignname,TEMPLATEID,smsrate,shortURLId,PrevBalance,CampaignCost,AvailableBalance,tmpFN,COUNTRYCODE) values ('" + userId + "','" + filenm + "','" + filenmext + "','" + rowcnt.ToString() + "','" + s + "','" + campnm + "','" + TemplateID + "','" + rate + "','" + Convert.ToString(shortURLId) + "','" + PrevBalance + "','" + CampaignCost + "','" + AvailableBalance + "','" + tmpfilenm + "','" + country_code + "') " +
+                    " declare @id numeric(10) select @id = max(id) from SMSFILEUPLOAD where userid='" + userId + "' ; ";
+
+                //call sms test function test - get true / false
+                if (Helper.Global.Istemplatetest == false)
+                {
+                    sql = sql + " select t.* into #t_012 from " + user + " t " +
+                       " delete d from " + user + " d inner join #t_012 t on d.[" + colnm + "] = t.[" + colnm + "]  ;  " +
+                       " alter table #t_012 add msgid varchar (100) ;  ";
+
+                    for (int x = 0; x < noofsms; x++)
+                    {
+                        string smsTex = GetSMSText(msg, x + 1, noofsms, ucs2);
+                        sql = sql + " update #t_012 set msgid=newid() " +
+                            " Insert into msgsubmitted (ID,PROVIDER,SMPPACCOUNTID,PROFILEID,MSGTEXT,TOMOBILE,SENDERID,CREATEDAT,SENTDATETIME,MSGID,INSERTDATE,FILEID,NSEND,smstext,smsrate) " +
+                            " select @id as id,'vcon',smppaccountid,'" + userId + "'," +
+                            (shUrl != "" ? " REPLACE(N'" + m + "','" + shUrl + "','" + domName + "' + shortsegment collate SQL_Latin1_General_CP1_CI_AS) " : "N'" + m + "'") + " as msgtext,CONVERT(nvarchar(255),LTRIM(RTRIM(str(ISNULL([" + colnm + @"],0),20,0)))) as TOMOBILE,'" + s + "',GETDATE(),GETDATE(),msgid,getdate(),@id as fileid,'1'," +
+                            (shUrl != "" ? " REPLACE(N'" + m + "','" + shUrl + "','" + domName + "' + shortsegment collate SQL_Latin1_General_CP1_CI_AS) " : "N'" + m + "'") + ",'" + rate.ToString() + "' from #t_012 ; " +
+                        " Insert into delivery (DLVRTEXT,MSGID,DLVRTIME,DLVRSTATUS,err_code,INSERTDATE) " +
+                        @" select 'id:' + MSGID + ' sub:001 dlvrd:001 submit date:' + RIGHT(CONVERT(VARCHAR,getdate(),112),6) + REPLACE(CONVERT(VARCHAR,getdate(),108),':','') + 
+                    ' done date:' + RIGHT(CONVERT(VARCHAR, GETDATE(), 112), 6) + REPLACE(CONVERT(VARCHAR, GETDATE(), 108), ':', '') + ' stat:UNDELIV err:" + Helper.Global.templateErrorCode + @" text:' AS DLVRTEXT, MSGID, GETDATE(), 'Undeliverable','" + Helper.Global.templateErrorCode + @"',getdate()
+                     FROM #t_012 ";
+                    }
+                    if (shUrl != "")
+                    {
+                        sql = sql + " insert into mobtrackurl (urlid, mobile, sentdate, segment,fileid,templateid) select " +
+                           "'" + shortURLId.ToString() + "', [" + colnm + "] , getdate(),shortsegment,@id as fileid,'" + TemplateID + "' as templateid  from " + user + " where [" + colnm + "] is not null ; ";
+                    }
+                    sql = sql + " end ";
+                }
+                else
+                {
+                    double Bper = GetBlockSMSper(userId, "B");
+                    if (Bper != 0)
+                    {
+                        Int32 cnt20 = Convert.ToInt32(Convert.ToDouble(rowcnt) * Bper);
+                        sql = sql + " select top " + cnt20 + " * into #t10 from " + user + " where [" + colnm + "] is not null and [" + colnm + "] not in (" + getWhiteListNo(userId) + ") ORDER BY NEWID() " +
+                            " delete d from " + user + " d inner join #t10 t on d.[" + colnm + "] = t.[" + colnm + "]  ;  " +
+                            " alter table #t10 add msgid varchar (100) ;  ";
+
+                        for (int x = 0; x < noofsms; x++)
+                        {
+                            //string smsTex = GetSMSText(msg, x + 1, noofsms, ucs2);
+                            sql = sql + " update #t10 set msgid=newid() " +
+                            @" insert into notsubmitted (ID,PROVIDER,SMPPACCOUNTID,PROFILEID,MSGTEXT,TOMOBILE,SENDERID,CREATEDAT,SENTDATETIME,MSGID,INSERTDATE,FILEID,NSEND,smsrate)
+                        select @id as id,'vcon',smppaccountid,'" + userId + "'," +
+                            (shUrl != "" ? " REPLACE(N'" + m + "','" + shUrl + "','" + domName + "' + shortsegment collate SQL_Latin1_General_CP1_CI_AS) " : "N'" + m + "'") + " ,[" + colnm + "] as TOMOBILE,'" + s + "',GETDATE(),GETDATE(),msgid,getdate(),@id as fileid,'1','" + rate.ToString() + "' from #t10 ; " +
+                            " Insert into msgsubmitted (ID,PROVIDER,SMPPACCOUNTID,PROFILEID,MSGTEXT,TOMOBILE,SENDERID,CREATEDAT,SENTDATETIME,MSGID,INSERTDATE,FILEID,NSEND,smstext,smsrate) " +
+                            " select @id as id,'vcon',smppaccountid,'" + userId + "'," + (shUrl != "" ? " REPLACE(N'" + m + "','" + shUrl + "','" + domName + "' + shortsegment collate SQL_Latin1_General_CP1_CI_AS) " : "N'" + m + "'") + ",[" + colnm + "] as TOMOBILE,'" + s + "',GETDATE(),GETDATE(),msgid,getdate(),@id as fileid,'1'," +
+                            (shUrl != "" ? " REPLACE(N'" + m + "','" + shUrl + "','" + domName + "' + shortsegment collate SQL_Latin1_General_CP1_CI_AS) " : "N'" + m + "'") + ",'" + rate.ToString() + "' from #t10 ; ";
+                        }
+                    }
+                    double Fper = GetBlockSMSper(userId, "F");
+                    if (Fper != 0)
+                    {
+                        Int32 cnt20 = Convert.ToInt32(Convert.ToDouble(rowcnt) * Fper);
+                        sql = sql + " select top " + cnt20 + " * into #t101 from " + user + " where [" + colnm + "] is not null and [" + colnm + "] not in (" + getWhiteListNo(userId) + ") ORDER BY NEWID() " +
+                            " delete d from " + user + " d inner join #t101 t on d.[" + colnm + "] = t.[" + colnm + "]  ;  " +
+                            " alter table #t101 add msgid varchar (100) ;  ";
+
+                        for (int x = 0; x < noofsms; x++)
+                        {
+                            //string smsTex = GetSMSText(msg, x + 1, noofsms, ucs2);
+                            sql = sql + " update #t101 set msgid=newid() " +
+                            @" insert into FAILsubmitted (ID,PROVIDER,SMPPACCOUNTID,PROFILEID,MSGTEXT,TOMOBILE,SENDERID,CREATEDAT,SENTDATETIME,MSGID,INSERTDATE,FILEID,NSEND,smsrate)
+                        select @id as id,'vcon',smppaccountid,'" + userId + "'," +
+                            (shUrl != "" ? " REPLACE(N'" + m + "','" + shUrl + "','" + domName + "' + shortsegment collate SQL_Latin1_General_CP1_CI_AS) " : "N'" + m + "'") + " ,[" + colnm + "] as TOMOBILE," +
+                            "'" + s + "',GETDATE(),GETDATE(),msgid,getdate(),@id as fileid,'1','" + rate.ToString() + "' from #t101 ; " +
+                            " Insert into msgsubmitted (ID,PROVIDER,SMPPACCOUNTID,PROFILEID,MSGTEXT,TOMOBILE,SENDERID,CREATEDAT,SENTDATETIME,MSGID,INSERTDATE,FILEID,NSEND,smstext,smsrate) " +
+                            " select @id as id,'vcon',smppaccountid,'" + userId + "'," + (shUrl != "" ? " REPLACE(N'" + m + "','" + shUrl + "','" + domName + "' + shortsegment collate SQL_Latin1_General_CP1_CI_AS) " : "N'" + m + "'") + ",[" + colnm + "] as TOMOBILE,'" + s + "',GETDATE(),GETDATE(),msgid,getdate(),@id as fileid,'1'," +
+                            (shUrl != "" ? " REPLACE(N'" + m + "','" + shUrl + "','" + domName + "' + shortsegment collate SQL_Latin1_General_CP1_CI_AS) " : "N'" + m + "'") + ",'" + rate.ToString() + "' from #t101 ; ";
+                        }
+                    }
+                    bool blu = blacklistuser(userId);
+                    if (blu)
+                    {
+                        sql = sql + " select t.* into #t11 from " + user + " t left join BLACKLISTNO b on t.[" + colnm + "]=b.MOBILENO and b.userid='" + userId + "'  where b.MOBILENO is not null and t.[" + colnm + "] is not null " +
+                            " delete d from " + user + " d inner join #t11 t on d.[" + colnm + "] = t.[" + colnm + "]  ;  " +
+                            " alter table #t11 add msgid varchar (100) ; ";
+                        for (int x = 0; x < noofsms; x++)
+                        {
+                            //string smsTex = GetSMSText(msg, x + 1, noofsms, ucs2);
+                            sql = sql + " update #t11 set msgid=newid() " +
+                            " Insert into msgsubmitted (ID,PROVIDER,SMPPACCOUNTID,PROFILEID,MSGTEXT,TOMOBILE,SENDERID,CREATEDAT,SENTDATETIME,MSGID,INSERTDATE,FILEID,NSEND,smstext,smsrate) " +
+                            " select @id as id,'vcon',smppaccountid,'" + userId + "'," +
+                            (shUrl != "" ? " REPLACE(N'" + m + "','" + shUrl + "','" + domName + "' + shortsegment collate SQL_Latin1_General_CP1_CI_AS) " : "N'" + m + "'") + " as msgtext,CONVERT(nvarchar(255),LTRIM(RTRIM(str(ISNULL([" + colnm + @"],0),20,0)))) as TOMOBILE,'" + s + "',GETDATE(),GETDATE(),msgid,getdate(),@id as fileid,'1'," +
+                            (shUrl != "" ? " REPLACE(N'" + m + "','" + shUrl + "','" + domName + "' + shortsegment collate SQL_Latin1_General_CP1_CI_AS) " : "N'" + m + "'") + ",'" + rate.ToString() + "' from #t11 ; " +
+                            " Insert into delivery (DLVRTEXT,MSGID,DLVRTIME,DLVRSTATUS,err_code,INSERTDATE) " +
+                            @" select 'id:' + MSGID + ' sub:001 dlvrd:001 submit date:' + RIGHT(cONVERT(VARCHAR,getdate(),112),6) + REPLACE(cONVERT(VARCHAR,getdate(),108),':','') + 
+                    ' done date:' + RIGHT(cONVERT(VARCHAR, GETDATE(), 112), 6) + REPLACE(cONVERT(VARCHAR, GETDATE(), 108), ':', '') + ' stat:BlackList err:250 text:' AS DLVRTEXT, MSGID, GETDATE(), 'BlackList','250',getdate()
+                    FROM #t11 ; ";
+                        }
+                    }
+
+                    bool isMobProcess = MobProcessUser(userId);
+                    if (isMobProcess)
+                    {
+                        //PROCESS FAIL
+                        sql = sql + " select t.*,s.err_code into #mt11 from " + user + " t inner join BLOCKSMSERROR s with (nolock) on s.profileid='" + userId + "' inner join UserMobile b with (nolock) on t.[" + colnm + "]=b.TOMOBILE and b.Profileid=s.profileid and s.err_code=b.err_code where s.DORF='F' " +
+                            " delete d from " + user + " d inner join #mt11 t on d.[" + colnm + "] = t.[" + colnm + "]  ;  " +
+                            " alter table #mt11 add msgid varchar (100) ;  ";
+
+                        for (int x = 0; x < noofsms; x++)
+                        {
+                            string smsTex = GetSMSText(msg, x + 1, noofsms, ucs2);
+                            sql = sql + " update #mt11 set msgid=newid() " +
+                            " Insert into msgsubmitted (ID,PROVIDER,SMPPACCOUNTID,PROFILEID,MSGTEXT,TOMOBILE,SENDERID,CREATEDAT,SENTDATETIME,MSGID,INSERTDATE,FILEID,NSEND,smstext,smsrate) " +
+                            " select @id as id,'vcon',smppaccountid,'" + userId + "'," +
+                            (shUrl != "" ? " REPLACE(N'" + m + "','" + shUrl + "','" + domName + "' + shortsegment collate SQL_Latin1_General_CP1_CI_AS) " : "N'" + m + "'") + " as msgtext,CONVERT(nvarchar(255),LTRIM(RTRIM(str(ISNULL([" + colnm + @"],0),20,0)))) as TOMOBILE,'" + s + "',GETDATE(),GETDATE(),msgid,getdate(),@id as fileid,'1'," +
+                            (shUrl != "" ? " REPLACE(N'" + m + "','" + shUrl + "','" + domName + "' + shortsegment collate SQL_Latin1_General_CP1_CI_AS) " : "N'" + m + "'") + ",'" + rate.ToString() + "' from #mt11 ; " +
+                            " Insert into delivery (DLVRTEXT,MSGID,DLVRTIME,DLVRSTATUS,err_code,INSERTDATE) " +
+                            @" select 'id:' + MSGID + ' sub:001 dlvrd:000 submit date:' + RIGHT(cONVERT(VARCHAR,getdate(),112),6) + REPLACE(cONVERT(VARCHAR,getdate(),108),':','') + 
+                            ' done date:' + RIGHT(cONVERT(VARCHAR, GETDATE(), 112), 6) + REPLACE(cONVERT(VARCHAR, GETDATE(), 108), ':', '') + ' stat:UNDELIV err:' + convert(varchar,err_code COLLATE SQL_Latin1_General_CP1_CI_AS) + ' text:' AS DLVRTEXT, MSGID, GETDATE(), 'Undeliverable',err_code,getdate()
+                            FROM #mt11 ; ";
+                        }
+
+                        //PROCESS DELIVERY
+                        sql = sql + " select t.* into #Dmt11 from " + user + " t inner join BLOCKSMSERROR s with (nolock) on s.profileid='" + userId + "' inner join UserMobile b with (nolock) on t.[" + colnm + "]=b.TOMOBILE and b.Profileid=s.profileid and s.err_code=b.err_code where s.DORF='D' " +
+                            " delete d from " + user + " d inner join #Dmt11 t on d.[" + colnm + "] = t.[" + colnm + "]  ;  " +
+                            " alter table #Dmt11 add msgid varchar (100) ;  ";
+
+                        for (int x = 0; x < noofsms; x++)
+                        {
+                            string smsTex = GetSMSText(msg, x + 1, noofsms, ucs2);
+                            sql = sql + " update #Dmt11 set msgid=newid() " +
+                            " Insert into msgsubmitted (ID,PROVIDER,SMPPACCOUNTID,PROFILEID,MSGTEXT,TOMOBILE,SENDERID,CREATEDAT,SENTDATETIME,MSGID,INSERTDATE,FILEID,NSEND,smstext,smsrate) " +
+                            " select @id as id,'vcon',smppaccountid,'" + userId + "'," +
+                            (shUrl != "" ? " REPLACE(N'" + m + "','" + shUrl + "','" + domName + "' + shortsegment collate SQL_Latin1_General_CP1_CI_AS) " : "N'" + m + "'") + " as msgtext,CONVERT(nvarchar(255),LTRIM(RTRIM(str(ISNULL([" + colnm + @"],0),20,0)))) as TOMOBILE,'" + s + "',GETDATE(),GETDATE(),msgid,getdate(),@id as fileid,'1'," +
+                            (shUrl != "" ? " REPLACE(N'" + m + "','" + shUrl + "','" + domName + "' + shortsegment collate SQL_Latin1_General_CP1_CI_AS) " : "N'" + m + "'") + ",'" + rate.ToString() + "' from #Dmt11 ; " +
+                            " Insert into delivery (DLVRTEXT,MSGID,DLVRTIME,DLVRSTATUS,err_code,INSERTDATE) " +
+                            @" select 'id:' + MSGID + ' sub:001 dlvrd:001 submit date:' + RIGHT(cONVERT(VARCHAR,getdate(),112),6) + REPLACE(cONVERT(VARCHAR,getdate(),108),':','') + 
+                            ' done date:' + RIGHT(cONVERT(VARCHAR, GETDATE(), 112), 6) + REPLACE(cONVERT(VARCHAR, GETDATE(), 108), ':', '') + ' stat:DELIVRD err:000 text:' AS DLVRTEXT, MSGID, GETDATE(), 'Delivered','000',getdate()
+                            FROM #Dmt11 ; ";
+                        }
+                    }
+
+
+                    sql = sql + " INSERT INTO MSGTRAN (PROVIDER,SMPPACCOUNTID,PROFILEID,MSGTEXT,TOMOBILE,SENDERID,CREATEDAT,FILEID,peid,DATACODE,smsrate,templateid)  " +
+                        " Select 'VCON' as PROVIDER, smppaccountid, '" + userId + @"' as PROFILEID, " +
+                        (shUrl != "" ? " REPLACE(N'" + m + "', '" + shUrl + "', '" + domName + "' + shortsegment collate SQL_Latin1_General_CP1_CI_AS) " : "N'" + m + "'") + " as MSGTEXT, CONVERT(nvarchar(255),LTRIM(RTRIM(str(ISNULL([" + colnm + @"],0),20,0)))) as TOMOBILE
+                , '" + s + @"' as SENDERID, GETDATE() as CREATEDAT,@id as fileid,'" + peid + "' as peid,'" + dataCode + "' AS DATACODE,'" + rate.ToString() + "' as smsrate,'" + TemplateID + "' AS templateid from " + user + " where [" + colnm + "] is not null ; ";
+
+
+                    if (Bper != 0 && shUrl != "")
+                    {
+                        sql = sql + " insert into mobtrackurl (urlid, mobile, sentdate, segment,fileid,templateid) select " +
+                       "'" + shortURLId.ToString() + "', [" + colnm + "] , getdate(),shortsegment,@id as fileid,'" + TemplateID + "' as templateid  from #t10 where [" + colnm + "] is not null ; ";
+                    }
+                    if (Fper != 0 && shUrl != "")
+                    {
+                        sql = sql + " insert into mobtrackurl (urlid, mobile, sentdate, segment,fileid,templateid) select " +
+                       "'" + shortURLId.ToString() + "', [" + colnm + "] , getdate(),shortsegment,@id as fileid,'" + TemplateID + "' as templateid  from #t101 where [" + colnm + "] is not null ; ";
+                    }
+                    if (blu && shUrl != "")
+                    {
+                        sql = sql + " insert into mobtrackurl (urlid, mobile, sentdate, segment,fileid,templateid) select " +
+                       "'" + shortURLId.ToString() + "', [" + colnm + "] , getdate(),shortsegment,@id as fileid,'" + TemplateID + "' as templateid  from #t11 where [" + colnm + "] is not null ; ";
+                    }
+                    if (shUrl != "")
+                    {
+                        sql = sql + " insert into mobtrackurl (urlid, mobile, sentdate, segment,fileid,templateid) select " +
+                           "'" + shortURLId.ToString() + "', [" + colnm + "] , getdate(),shortsegment,@id as fileid,'" + TemplateID + "' as templateid  from " + user + " where [" + colnm + "] is not null ; ";
+                    }
+                    sql = sql + " end ";
+
+                    //  double bal = CalculateAmount(userId, noof_message, Convert.ToDouble(rate), smscount);
+                    double bal = CalculateSMSCost(noof_message, Convert.ToDouble(rate));
+                    sql = sql + " update customer set balance = balance - '" + bal + "' where username = '" + userId + "'";
+                }
+
+
+            }
+            else
+            {
+                string q1 = "select defaultCountry from CUSTOMER with(nolock) where username='" + userId + "' ";
+                int timedifferenceInMinute = Convert.ToInt32(database.GetScalarValue("select timedifferenceInMinute from tblCountry where counryCode in(" + q1 + ")"));
+
+                // int shortURLId = 0;
+                string shortURL = ""; string domain = "";
+                shortURL = shUrl; domain = domName;
+                sql = @"Insert into SMSFILEUPLOAD (USERID,FILENM,EXTENSION,RECCOUNT,senderid,schedule,campaignname,TEMPLATEID,smsrate,shortURLId,PrevBalance,CampaignCost,AvailableBalance,tmpFN,COUNTRYCODE) values ('" + userId + "','" + filenm + "','" + filenmext + "','" + rowcnt.ToString() + "','" + s + "','" + schdate + "','" + campnm + "','" + TemplateID + "','" + rate + "','" + Convert.ToString(shortURLId) + "','" + PrevBalance + "','" + CampaignCost + "','" + AvailableBalance + "','" + tmpfilenm + "','" + country_code + "') " +
+                " declare @id numeric(10) select @id = max(id) from SMSFILEUPLOAD where userid='" + userId + "' ; " +
+                " INSERT INTO MsgSchedule (PROVIDER,SMPPACCOUNTID,PROFILEID,MSGTEXT,TOMOBILE,SENDERID,CREATEDAT,SCHEDULE,MOBTRK,SHORTURL,URLID,NEWSEGMENT,SMSRATE,SMSTYPE,DOMAIN,FILEID,peid,DATACODE,blacklist,templateid) " +
+                " select 'VCON',u.smppaccountid,'" + userId + "',N'" + m + "',CONVERT(nvarchar(255),LTRIM(RTRIM(str(ISNULL(u.[" + colnm + @"],0),20,0)))) as TOMOBILE,'" + s + "',GETDATE(),dateadd(minute, " + Convert.ToString(Math.Abs(timedifferenceInMinute)) + ", '" + schdate + "'),'" +
+                (shortURLId > 0 ? "Y" : "N") + "','" + shortURL + "','" + shortURLId.ToString() + "'," + (shortURLId > 0 ? "left(NEWID(),8)" : "null") + ",'" + rate.ToString() + "','" + SMSType + "','" +
+                domain + "',@id,'" + peid + "','" + dataCode + "',case when b.mobileno is not null then 1 else 0 end as blacklist,'" + TemplateID + "' AS templateid from " + user + " u left join blacklistno b on u.[" + colnm + "]=b.mobileno and b.userid='" + userId + "' where u.[" + colnm + "] is not null ; ";
+
+                double Bper = GetBlockSMSper(userId, "B");
+                if (Bper != 0)
+                {
+                    Int32 cnt20 = Convert.ToInt32(Convert.ToDouble(rowcnt) * Bper);
+                    sql = sql + " update top (" + cnt20 + ") MsgSchedule set blockno=1 where profileid='" + userId + "' and schedule=dateadd(minute, " + Convert.ToString(Math.Abs(timedifferenceInMinute)) + ", '" + schdate + "') and isnull(blacklist,0)=0 and fileid=@id and Tomobile not in (" + getWhiteListNo(userId) + ") ";
+                }
+                double Fper = GetBlockSMSper(userId, "F");
+                if (Fper != 0)
+                {
+                    Int32 cnt20 = Convert.ToInt32(Convert.ToDouble(rowcnt) * Fper);
+                    sql = sql + " update top (" + cnt20 + ") MsgSchedule set blockFAIL=1 where profileid='" + userId + "' and schedule=dateadd(minute, " + Convert.ToString(Math.Abs(timedifferenceInMinute)) + ", '" + schdate + "') and isnull(blacklist,0)=0 and isnull(blockno,0)=0 and fileid=@id and Tomobile not in (" + getWhiteListNo(userId) + ") ";
+                }
+                if ((SMSType == "2" || SMSType == "3" || SMSType == "6") && shortURLId > 0)
+                {
+                    sql = sql + "; Update MsgSchedule set MSGTEXT=replace(MSGTEXT,shorturl,domain+newsegment) where PROFILEID='" + userId + "' and SCHEDULE=dateadd(minute, " + Convert.ToString(Math.Abs(timedifferenceInMinute)) + ", '" + schdate + "') ; ";
+                }
+                bool isMobProcess = MobProcessUser(userId);
+                if (isMobProcess)
+                {
+                    //PROCESS 
+                    sql = sql + "Update Msgschedule set blockno=1 from msgschedule m inner join BLOCKSMSERROR s with (nolock) on s.profileid=m.profileid inner join UserMobile b with (nolock) on m.tomobile=b.tomobile and m.profileid=b.profileid AND B.ERR_CODE=S.ERR_CODE where m.profileid='" + userId + "' and m.schedule=dateadd(minute, " + Convert.ToString(Math.Abs(timedifferenceInMinute)) + ", '" + schdate + "') and s.DORF='D' ; ";
+                    sql = sql + "Update Msgschedule set blockfail=1,ERR_CODE=S.ERR_CODE from msgschedule m inner join BLOCKSMSERROR s with (nolock) on s.profileid=m.profileid inner join UserMobile b with (nolock) on m.tomobile=b.tomobile and m.profileid=b.profileid AND B.ERR_CODE=S.ERR_CODE where m.profileid='" + userId + "' and m.schedule=dateadd(minute, " + Convert.ToString(Math.Abs(timedifferenceInMinute)) + ", '" + schdate + "') and s.DORF='F' ; ";
+                }
+                // double bal = CalculateAmount(userId, noof_message, Convert.ToDouble(rate), smscount);
+                double bal = CalculateSMSCost(noof_message, Convert.ToDouble(rate));
+                sql = sql + " update customer set balance = balance - '" + bal + "' where username = '" + userId + "'";
+            }
+
+            try
+            {
+                database.ExecuteNonQuery(sql);
+            }
+            catch (Exception ex)
+            {
+                LogError("Error in InsertTemplateSMSrecordsFromUSERTMP method !  ", ex.Message + " - " + ex.StackTrace);
+                throw ex;
+            }
+        }
+
+        public void InsertSMSrecordsFromUSERTMP(string userId, int length, int trcs, string s, string SMSType, string msg, string filenm, string filenmext, DataTable dtAc, string campnm, bool ucs2, int noofsms, double Drate, List<string> mobList, string manual, string retarget, string TemplateID, string country_code, double PrevBalance = 0, double AvailableBalance = 0, string tmpfilenm = "", string imagefilepath = "", string videopath = "", string templateId = "", string fileurl = "")
+        {
+            //change SMPP ACCOUNT based on SMSTYPE
+            string user = tmpfilenm;
+            string sql;
+
+            string colnm = "";
+
+            if (manual == "MANUAL")
+            {
+                database.ExecuteNonQuery("if exists (select * from sys.tables where name='" + user + @"') drop table " + user + @"; Create table " + user + @" (MobNo numeric) ;  ");
+                foreach (var m in mobList)
+                {
+                    database.ExecuteNonQuery(" Insert into " + user + @" values ('" + m + "')");
+                }
+                //database.ExecuteNonQuery("delete d from " + user + @" d inner join globalBlackListNo b on b.mobile=d.MobileNo ");
+                /*rabi 14 jul 21*/
+                //database.ExecuteNonQuery(" if exists(select * from smsrestrictmobile srm join [smsrestriction] sr on srm.smsrestrictionid=sr.id where userid='" + userId + "' AND TYPE='U') delete d from " + user + @" d inner join SMSRestrictmobile SRM on SRM.MobileNo='91'+d.MobileNo  join [SMSRestriction] SR on SRM.SMSRestrictioniD=SR.Id  WHERE UserId='" + userId + "' AND TYPE='U' if exists(select * from smsrestrictmobile srm join [smsrestriction] sr on srm.smsrestrictionid=sr.id where SenderId='" + s + "' AND TYPE='S') delete d from " + user + @" d inner join SMSRestrictmobile SRM on SRM.MobileNo='91'+d.MobileNo  join [SMSRestriction] SR on SRM.SMSRestrictioniD=SR.Id  WHERE SenderId='" + s + "' AND TYPE='S'");
+
+            }
+
+            colnm = Convert.ToString(database.GetScalarValue("if exists (select * from sys.tables where name='" + user + @"') select column_name From information_schema.columns where table_name = '" + user + @"' and ordinal_position = 1 else select '' "));
+            if (country_code != "" && manual != "MANUAL")
+                // database.ExecuteNonQuery("if exists (select * from sys.tables where name='" + user + @"') update " + user + @" set [" + colnm + "] =convert(varchar,convert(bigint,[" + colnm + "])) ");
+
+                checkNumberDigitsAndUpdate(user, colnm);
+
+            string peid = getPEid(userId);
+
+            sql = GetSqlAccounts(dtAc);
+            DataTable dt = database.GetDataTable(sql);
+
+            Int32 rowcnt = Convert.ToInt32(database.GetScalarValue("if exists (select * from sys.tables where name='" + user + @"') select count(*) from " + user + @" else select 0 "));
+
+            dt.Columns.Add("cnt", typeof(string));
+
+            int totalPDU = 0;
+            for (int i = 0; i < dt.Rows.Count; i++) totalPDU += Convert.ToInt16(dt.Rows[i]["PDUSIZE"]);
+            Int32 totcnt = 0;
+            for (int i = 0; i < dt.Rows.Count; i++)
+            {
+                double per = (Convert.ToDouble(dt.Rows[i]["PDUSIZE"]) * 100) / Convert.ToDouble(totalPDU);
+                Int32 cntrow = Convert.ToInt32(rowcnt * (per / 100));
+                totcnt += cntrow;
+                dt.Rows[i]["cnt"] = cntrow.ToString();
+            }
+            int dif = 0;
+            if (totcnt < rowcnt)
+            {
+                dif = rowcnt - totcnt;
+                for (int i = 0; i < dt.Rows.Count; i++)
+                    dt.Rows[i]["cnt"] = Convert.ToString(Convert.ToInt32(dt.Rows[i]["cnt"]) + 1);
+            }
+            //Int32 cnt = (rowcnt / dt.Rows.Count);
+            //if (rowcnt % dt.Rows.Count > 0) cnt++;
+            //database.ExecuteNonQuery("IF not EXISTS(SELECT 1 FROM sys.columns WHERE Name = N'SMPPACCOUNTID' AND Object_ID = Object_ID(N'" + user + "')) " +
+            //   " alter table " + user + @" add smppaccountid numeric(10)"); //add new column
+
+            //  database.ExecuteNonQuery("alter table " + user + @" add smppaccountid numeric(10) ");
+
+            for (int i = 0; i < dt.Rows.Count; i++)
+            {
+                sql = "update top (" + dt.Rows[i]["cnt"].ToString() + ") " + user + @" set smppaccountid = '" + dt.Rows[i]["smppaccountid"].ToString() + "' where smppaccountid is null ";
+                database.ExecuteNonQuery(sql);
+            }
+            msg = msg.Replace("'", "''"); filenm = filenm.Replace("'", "''");
+
+            double CampaignCost = PrevBalance - AvailableBalance;
+
+
+
+            sql = @"if exists (select * from sys.tables where name='" + user + @"')  " +
+                " begin " +
+                //" Insert into SMSFILEUPLOAD (USERID,FILENM,EXTENSION,RECCOUNT,senderid,campaignname,smsrate,PrevBalance,CampaignCost,AvailableBalance,tmpFN,COUNTRYCODE) values" +
+                //" ('" + user + "','" + filenm + "','" + filenmext + "','" + rowcnt.ToString() + "','" + s + "','" + campnm + "','" + Drate + "','" + PrevBalance + "','" + CampaignCost + "','" + AvailableBalance + "','" + tmpfilenm + "','" + country_code + "') " +
+                " declare @id numeric(10) select @id = max(id) from SMSFILEUPLOAD where userid='" + user + "' ; ";
+
+            string rate = Drate.ToString();
+
+            //call sms test function test - get true / false
+            if (Helper.Global.Istemplatetest == false)
+            {
+                sql = sql + " select t.* into #t_011 from " + user + " t " +
+                   " delete d from " + user + " d inner join #t_011 t on d.[" + colnm + "] = t.[" + colnm + "]  ;  " +
+                   " alter table #t_011 add msgid varchar (100) ;  ";
+
+                for (int x = 0; x < noofsms; x++)
+                {
+                    string smsTex = GetSMSText(msg, x + 1, noofsms, ucs2);
+                    sql = sql + " update #t_011 set msgid=newid() " +
+                    " Insert into msgsubmitted (ID,PROVIDER,SMPPACCOUNTID,PROFILEID,MSGTEXT,TOMOBILE,SENDERID,CREATEDAT,SENTDATETIME,MSGID,INSERTDATE,FILEID,NSEND,smstext,smsrate) " +
+                    " select @id as id,'vcon',smppaccountid,'" + userId + "',N'" + smsTex + "',[" + colnm + "] as TOMOBILE,'" + s + "',GETDATE(),GETDATE(),msgid,getdate(),@id as fileid,'1'," +
+                    " N'" + msg + "','" + rate + "' from #t_011 ; " +
+                    " Insert into delivery (DLVRTEXT,MSGID,DLVRTIME,DLVRSTATUS,err_code,INSERTDATE) " +
+                    @" select 'id:' + MSGID + ' sub:001 dlvrd:001 submit date:' + RIGHT(CONVERT(VARCHAR,getdate(),112),6) + REPLACE(CONVERT(VARCHAR,getdate(),108),':','') + 
+                    ' done date:' + RIGHT(CONVERT(VARCHAR, GETDATE(), 112), 6) + REPLACE(CONVERT(VARCHAR, GETDATE(), 108), ':', '') + ' stat:UNDELIV err:" + Helper.Global.templateErrorCode + @" text:' AS DLVRTEXT, MSGID, GETDATE(), 'Undeliverable','" + Helper.Global.templateErrorCode + @"',getdate()
+                    FROM #t_011 end ";
+                }
+            }
+            else
+            {
+
+                double Bper = GetBlockSMSper(userId, "B");
+                if (Bper != 0 && retarget == "")
+                {
+                    Int32 cnt20 = Convert.ToInt32(Convert.ToDouble(rowcnt) * Bper);
+                    sql = sql + " select top " + cnt20 + " * into #t101 from " + user + " where [" + colnm + "] is not null and [" + colnm + "] not in (" + getWhiteListNo(userId) + ") ORDER BY NEWID() " +
+                        " delete d from " + user + " d inner join #t101 t on d.[" + colnm + "] = t.[" + colnm + "]  ;  " +
+                        " alter table #t101 add msgid varchar (100) ; ";
+
+                    for (int x = 0; x < noofsms; x++)
+                    {
+                        string smsTex = GetSMSText(msg, x + 1, noofsms, ucs2);
+                        sql = sql + " update #t101 set msgid=newid() " +
+                            @" insert into notsubmitted (ID,PROVIDER,SMPPACCOUNTID,PROFILEID,MSGTEXT,TOMOBILE,SENDERID,CREATEDAT,SENTDATETIME,MSGID,INSERTDATE,FILEID,NSEND,smsrate)
+                      select @id as id,'vcon',smppaccountid,'" + userId + "',N'" + smsTex + "',[" + colnm + "] as TOMOBILE,'" + s + "'," +
+                          "GETDATE(),GETDATE(),msgid,getdate(),@id as fileid,'1','" + rate + "' from #t101 ; " +
+                             " Insert into msgsubmitted (ID,PROVIDER,SMPPACCOUNTID,PROFILEID,MSGTEXT,TOMOBILE,SENDERID,CREATEDAT,SENTDATETIME,MSGID,INSERTDATE,FILEID,NSEND,smstext,smsrate) " +
+                             " select @id as id,'vcon',smppaccountid,'" + userId + "',N'" + smsTex + "',[" + colnm + "] as TOMOBILE,'" + s + "',GETDATE(),GETDATE(),msgid,getdate(),@id as fileid,'1'," +
+                             " N'" + msg + "','" + rate + "' from #t101 ; ";
+                    }
+                }
+                double Fper = GetBlockSMSper(userId, "F");
+                if (Fper != 0 && retarget == "")
+                {
+                    Int32 cnt20 = Convert.ToInt32(Convert.ToDouble(rowcnt) * Fper);
+                    sql = sql + " select top " + cnt20 + " * into #t10 from " + user + " where [" + colnm + "] is not null and [" + colnm + "] not in (" + getWhiteListNo(userId) + ") ORDER BY NEWID() " +
+                        " delete d from " + user + " d inner join #t10 t on d.[" + colnm + "] = t.[" + colnm + "]  ;  " +
+                        " alter table #t10 add msgid varchar (100) ; ";
+
+                    for (int x = 0; x < noofsms; x++)
+                    {
+                        string smsTex = GetSMSText(msg, x + 1, noofsms, ucs2);
+                        sql = sql + " update #t10 set msgid=newid() " +
+                            @" insert into FAILsubmitted (ID,PROVIDER,SMPPACCOUNTID,PROFILEID,MSGTEXT,TOMOBILE,SENDERID,CREATEDAT,SENTDATETIME,MSGID,INSERTDATE,FILEID,NSEND,smsrate)
+                      select @id as id,'vcon',smppaccountid,'" + userId + "',N'" + smsTex + "',[" + colnm + "] as TOMOBILE,'" + s + "',GETDATE(),GETDATE(),msgid,getdate(),@id as fileid,'1','" + rate + "' from #t10 ; " +
+                             " Insert into msgsubmitted (ID,PROVIDER,SMPPACCOUNTID,PROFILEID,MSGTEXT,TOMOBILE,SENDERID,CREATEDAT,SENTDATETIME,MSGID,INSERTDATE,FILEID,NSEND,smstext,smsrate) " +
+                             " select @id as id,'vcon',smppaccountid,'" + userId + "',N'" + smsTex + "',[" + colnm + "] as TOMOBILE,'" + s + "',GETDATE(),GETDATE(),msgid,getdate(),@id as fileid,'1'," +
+                             " N'" + msg + "','" + rate + "' from #t10 ; ";
+                    }
+                }
+                if (blacklistuser(userId))
+                {
+                    sql = sql + " select t.* into #t11 from " + user + " t left join BLACKLISTNO b on t.[" + colnm + "]=b.MOBILENO and b.userid='" + userId + "' where b.MOBILENO is not null " +
+                        " delete d from " + user + " d inner join #t11 t on d.[" + colnm + "] = t.[" + colnm + "]  ;  " +
+                        " alter table #t11 add msgid varchar (100) ; ";
+                    for (int x = 0; x < noofsms; x++)
+                    {
+                        string smsTex = GetSMSText(msg, x + 1, noofsms, ucs2);
+                        sql = sql + " update #t11 set msgid=newid() " +
+                        " Insert into msgsubmitted (ID,PROVIDER,SMPPACCOUNTID,PROFILEID,MSGTEXT,TOMOBILE,SENDERID,CREATEDAT,SENTDATETIME,MSGID,INSERTDATE,FILEID,NSEND,smstext,smsrate) " +
+                        " select @id as id,'vcon',smppaccountid,'" + userId + "',N'" + smsTex + "',[" + colnm + "] as TOMOBILE,'" + s + "',GETDATE(),GETDATE(),msgid,getdate(),@id as fileid,'1'," +
+                        " N'" + msg + "','" + rate + "' from #t11 ; " +
+                        " Insert into delivery (DLVRTEXT,MSGID,DLVRTIME,DLVRSTATUS,err_code,INSERTDATE) " +
+                        @" select 'id:' + MSGID + ' sub:001 dlvrd:001 submit date:' + RIGHT(cONVERT(VARCHAR,getdate(),112),6) + REPLACE(cONVERT(VARCHAR,getdate(),108),':','') + 
+                    ' done date:' + RIGHT(cONVERT(VARCHAR, GETDATE(), 112), 6) + REPLACE(cONVERT(VARCHAR, GETDATE(), 108), ':', '') + ' stat:BlackList err:250 text:' AS DLVRTEXT, MSGID, GETDATE(), 'BlackList','250',getdate()
+                    FROM #t11 ; ";
+                    }
+                }
+
+                bool isMobProcess = MobProcessUser(userId);
+                if (isMobProcess)
+                {
+                    //PROCESS FAIL
+                    sql = sql + " select t.*,s.err_code into #mt11 from " + user + " t inner join BLOCKSMSERROR s with (nolock) on s.profileid='" + userId + "' inner join UserMobile b with (nolock) on t.[" + colnm + "]=b.TOMOBILE and b.Profileid=s.profileid and s.err_code=b.err_code where s.DORF='F' " +
+                        " delete d from " + user + " d inner join #mt11 t on d.[" + colnm + "] = t.[" + colnm + "]  ;  " +
+                        " alter table #mt11 add msgid varchar (100) ;  ";
+
+                    for (int x = 0; x < noofsms; x++)
+                    {
+                        string smsTex = GetSMSText(msg, x + 1, noofsms, ucs2);
+                        sql = sql + " update #mt11 set msgid=newid() " +
+                        " Insert into msgsubmitted (ID,PROVIDER,SMPPACCOUNTID,PROFILEID,MSGTEXT,TOMOBILE,SENDERID,CREATEDAT,SENTDATETIME,MSGID,INSERTDATE,FILEID,NSEND,smstext,smsrate) " +
+                        " select @id as id,'vcon',smppaccountid,'" + userId + "',N'" + smsTex + "',[" + colnm + "] as TOMOBILE,'" + s + "',GETDATE(),GETDATE(),msgid,getdate(),@id as fileid,'1'," +
+                        " N'" + msg + "','" + rate + "' from #mt11 ; " +
+                        " Insert into delivery (DLVRTEXT,MSGID,DLVRTIME,DLVRSTATUS,err_code,INSERTDATE) " +
+                        @" select 'id:' + MSGID + ' sub:001 dlvrd:000 submit date:' + RIGHT(cONVERT(VARCHAR,getdate(),112),6) + REPLACE(cONVERT(VARCHAR,getdate(),108),':','') + 
+                    ' done date:' + RIGHT(cONVERT(VARCHAR, GETDATE(), 112), 6) + REPLACE(cONVERT(VARCHAR, GETDATE(), 108), ':', '') + ' stat:UNDELIV err:' + convert(varchar,err_code COLLATE SQL_Latin1_General_CP1_CI_AS) + ' text:' AS DLVRTEXT, MSGID, GETDATE(), 'Undeliverable',err_code,getdate()
+                    FROM #mt11 ; ";
+                    }
+
+                    //PROCESS DELIVERY
+                    sql = sql + " select t.* into #Dmt11 from " + user + " t inner join BLOCKSMSERROR s with (nolock) on s.profileid='" + userId + "' inner join UserMobile b with (nolock) on t.[" + colnm + "]=b.TOMOBILE and b.Profileid=s.profileid and s.err_code=b.err_code where s.DORF='D' " +
+                        " delete d from " + user + " d inner join #Dmt11 t on d.[" + colnm + "] = t.[" + colnm + "]  ;  " +
+                        " alter table #Dmt11 add msgid varchar (100) ;  ";
+
+                    for (int x = 0; x < noofsms; x++)
+                    {
+                        string smsTex = GetSMSText(msg, x + 1, noofsms, ucs2);
+                        sql = sql + " update #Dmt11 set msgid=newid() " +
+                        " Insert into msgsubmitted (ID,PROVIDER,SMPPACCOUNTID,PROFILEID,MSGTEXT,TOMOBILE,SENDERID,CREATEDAT,SENTDATETIME,MSGID,INSERTDATE,FILEID,NSEND,smstext,smsrate) " +
+                        " select @id as id,'vcon',smppaccountid,'" + userId + "',N'" + smsTex + "',[" + colnm + "] as TOMOBILE,'" + s + "',GETDATE(),GETDATE(),msgid,getdate(),@id as fileid,'1'," +
+                        " N'" + msg + "','" + rate + "' from #Dmt11 ; " +
+                        " Insert into delivery (DLVRTEXT,MSGID,DLVRTIME,DLVRSTATUS,err_code,INSERTDATE) " +
+                        @" select 'id:' + MSGID + ' sub:001 dlvrd:001 submit date:' + RIGHT(cONVERT(VARCHAR,getdate(),112),6) + REPLACE(cONVERT(VARCHAR,getdate(),108),':','') + 
+                    ' done date:' + RIGHT(cONVERT(VARCHAR, GETDATE(), 112), 6) + REPLACE(cONVERT(VARCHAR, GETDATE(), 108), ':', '') + ' stat:DELIVRD err:000 text:' AS DLVRTEXT, MSGID, GETDATE(), 'Delivered','000',getdate()
+                    FROM #Dmt11 ; ";
+                    }
+                }
+                string dataCode = "";
+                if (SMSType == "8")
+                {
+                    if (ucs2)
+                        dataCode = "UnicodeFlashSMS";
+                    else
+                        dataCode = "DefaultFlashSMS";
+                }
+                else
+                {
+                    if (ucs2)
+                        dataCode = "UCS2";
+                    else
+                        dataCode = "Default";
+                }
+
+                sql = sql + "Insert into tblRCSMSGRCVD (CountryCode,MsgType,MobNo,MsgText,ImageFilePath,VedioFilePath,UploadFileName,DataTableName,NoOfRecds,UserId,CreatedDate,Noofrcs,Rate,Campaign,NoofChar,TNoOfRcs,TemplateID,imagefileurl)" +
+               " values ('" + country_code + "','" + SMSType + "','" + rowcnt.ToString() + "','" + msg + "','" + imagefilepath + "','" + videopath + " ','" + filenm + "','" + tmpfilenm + "','" + rowcnt.ToString() + "','" + userId + "',GETDATE(),'" + noofsms + "','" + Drate + "','" + campnm + "','" + length + "','" + trcs + "','" + templateId + "','" + fileurl + "') " +
+               "select @id = max(id) from tblRCSMSGRCVD where userid='" + user + "' update customer set rcsbalance='" + AvailableBalance + "' where username='" + userId + "' ";
+
+                //sql = sql + " INSERT INTO MSGTRAN (PROVIDER,SMPPACCOUNTID,PROFILEID,MSGTEXT,TOMOBILE,SENDERID,CREATEDAT,FILEID,peid,DATACODE,smsrate,Templateid)  " +
+                //    " Select 'VCON' as PROVIDER, smppaccountid, '" + userId + @"' as PROFILEID, N'" + msg + @"' as MSGTEXT, [" + colnm + @"] as TOMOBILE
+                //, '" + s + @"' as SENDERID, GETDATE() as CREATEDAT,@id as fileid,'" + peid + "' as peid,'" + dataCode + "' AS DATACODE,'" + rate.ToString() + "' as smsrate,'" + TemplateID + "' as templateid from " + user + " where [" + colnm + "] is not null ; " +
+                //    " end ";
+
+                //  double bal = CalculateAmount(userId, noof_message, Convert.ToDouble(rate), smscount);
+                double bal = CalculateSMSCost(noof_message, Convert.ToDouble(rate));
+                sql = sql + " update customer set balance = balance - '" + bal + "' where username = '" + userId + "' end";
+            }
+
+            try
+            {
+                database.ExecuteNonQuery(sql);
+            }
+            catch (Exception ex)
+            {
+                LogError("Error in InsertSMSrecordsFromUSERTMP method !  ", ex.Message + " - " + ex.StackTrace);
+                throw ex;
+            }
+        }
+
+        public void InsertRCSrecordsFromUSERTMP(string userId, int length, int trcs, string s, string SMSType, string msg, string filenm, string filenmext, DataTable dtAc, string campnm, bool ucs2, int noofsms, double Drate, List<string> mobList, string manual, string retarget, string TemplateID, string country_code, double PrevBalance = 0, double AvailableBalance = 0, string tmpfilenm = "", string imagefilepath = "", string videopath = "", string templateId = "", string fileurl = "", int check = 0, string smstId = "", string smstext = "", int nosms = 0)
+        {
+            //change SMPP ACCOUNT based on SMSTYPE
+            string user = tmpfilenm;
+            string sql;
+
+            string colnm = "";
+
+            if (manual == "MANUAL")
+            {
+                database.ExecuteNonQuery("if exists (select * from sys.tables where name='" + user + @"') drop table " + user + @"; Create table " + user + @" (MobNo numeric) ;  ");
+                foreach (var m in mobList)
+                {
+                    database.ExecuteNonQuery(" Insert into " + user + @" values ('" + m + "')");
+                }
+                //database.ExecuteNonQuery("delete d from " + user + @" d inner join globalBlackListNo b on b.mobile=d.MobileNo ");
+                /*rabi 14 jul 21*/
+                //database.ExecuteNonQuery(" if exists(select * from smsrestrictmobile srm join [smsrestriction] sr on srm.smsrestrictionid=sr.id where userid='" + userId + "' AND TYPE='U') delete d from " + user + @" d inner join SMSRestrictmobile SRM on SRM.MobileNo='91'+d.MobileNo  join [SMSRestriction] SR on SRM.SMSRestrictioniD=SR.Id  WHERE UserId='" + userId + "' AND TYPE='U' if exists(select * from smsrestrictmobile srm join [smsrestriction] sr on srm.smsrestrictionid=sr.id where SenderId='" + s + "' AND TYPE='S') delete d from " + user + @" d inner join SMSRestrictmobile SRM on SRM.MobileNo='91'+d.MobileNo  join [SMSRestriction] SR on SRM.SMSRestrictioniD=SR.Id  WHERE SenderId='" + s + "' AND TYPE='S'");
+
+            }
+            if (manual == "Test")
+            {
+
+                database.ExecuteNonQuery("if exists (select * from sys.tables where name='" + user + @"') drop table " + user + @"; Create table " + user + @" (MobNo numeric) ;  ");
+                foreach (var m in mobList)
+                {
+                    database.ExecuteNonQuery(" Insert into " + user + @" values ('" + m + "')");
+                }
+
+            }
+
+            colnm = Convert.ToString(database.GetScalarValue("if exists (select * from sys.tables where name='" + user + @"') select column_name From information_schema.columns where table_name = '" + user + @"' and ordinal_position = 1 else select '' "));
+            if (country_code != "" && manual != "MANUAL")
+                // database.ExecuteNonQuery("if exists (select * from sys.tables where name='" + user + @"') update " + user + @" set [" + colnm + "] =convert(varchar,convert(bigint,[" + colnm + "])) ");
+
+                checkNumberDigitsAndUpdate(user, colnm);
+
+            string peid = getPEid(userId);
+
+            sql = GetSqlAccounts(dtAc);
+            DataTable dt = database.GetDataTable(sql);
+
+            Int32 rowcnt = Convert.ToInt32(database.GetScalarValue("if exists (select * from sys.tables where name='" + user + @"') select count(*) from " + user + @" else select 0 "));
+
+            dt.Columns.Add("cnt", typeof(string));
+
+            //Int32 cnt = (rowcnt / dt.Rows.Count);
+            //if (rowcnt % dt.Rows.Count > 0) cnt++;
+            //database.ExecuteNonQuery("IF not EXISTS(SELECT 1 FROM sys.columns WHERE Name = N'SMPPACCOUNTID' AND Object_ID = Object_ID(N'" + user + "')) " +
+            //   " alter table " + user + @" add smppaccountid numeric(10)"); //add new column
+
+            //  database.ExecuteNonQuery("alter table " + user + @" add smppaccountid numeric(10) ");
+
+            msg = msg.Replace("'", "''"); filenm = filenm.Replace("'", "''");
+
+            double CampaignCost = PrevBalance - AvailableBalance;
+
+
+
+            sql = @"if exists (select * from sys.tables where name='" + user + @"')  " +
+                " begin " +
+                //" Insert into SMSFILEUPLOAD (USERID,FILENM,EXTENSION,RECCOUNT,senderid,campaignname,smsrate,PrevBalance,CampaignCost,AvailableBalance,tmpFN,COUNTRYCODE) values" +
+                //" ('" + user + "','" + filenm + "','" + filenmext + "','" + rowcnt.ToString() + "','" + s + "','" + campnm + "','" + Drate + "','" + PrevBalance + "','" + CampaignCost + "','" + AvailableBalance + "','" + tmpfilenm + "','" + country_code + "') " +
+                " declare @id numeric(10) select @id = max(id) from SMSFILEUPLOAD where userid='" + user + "' ; ";
+
+            string rate = Drate.ToString();
+
+            //call sms test function test - get true / false
+
+
+            double Bper = GetBlockSMSper(userId, "B");
+
+
+            bool isMobProcess = MobProcessUser(userId);
+
+
+
+            sql = sql + "Insert into tblRCSMSGRCVD (CountryCode,MsgType,MobNo,MsgText,ImageFilePath,VedioFilePath,UploadFileName,DataTableName,NoOfRecds,UserId,CreatedDate,Noofrcs,Rate,Campaign,NoofChar,TNoOfRcs,TemplateID,imagefileurl,failoverapp,smsTempId,smsText,vedioFileurl,smsucs2,noofsms)" +
+           " values ('" + country_code + "','" + SMSType + "','" + rowcnt.ToString() + "',N'" + msg + "','" + imagefilepath + "','" + videopath + " ','" + filenm + "','" + tmpfilenm + "','" + rowcnt.ToString() + "','" + userId + "',GETDATE(),'" + noofsms + "','" + Drate + "','" + campnm + "','" + length + "','" + trcs + "','" + templateId + "','" + fileurl + "','" + check + "','" + smstId + "',N'" + smstext + "','" + fileurl + "','" + ucs2 + "'," + nosms + ") " +
+           "select @id = max(id) from tblRCSMSGRCVD where userid='" + user + "' update customer set rcsbalance='" + AvailableBalance + "' where username='" + userId + "' ";
+
+            //sql = sql + " INSERT INTO MSGTRAN (PROVIDER,SMPPACCOUNTID,PROFILEID,MSGTEXT,TOMOBILE,SENDERID,CREATEDAT,FILEID,peid,DATACODE,smsrate,Templateid)  " +
+            //    " Select 'VCON' as PROVIDER, smppaccountid, '" + userId + @"' as PROFILEID, N'" + msg + @"' as MSGTEXT, [" + colnm + @"] as TOMOBILE
+            //, '" + s + @"' as SENDERID, GETDATE() as CREATEDAT,@id as fileid,'" + peid + "' as peid,'" + dataCode + "' AS DATACODE,'" + rate.ToString() + "' as smsrate,'" + TemplateID + "' as templateid from " + user + " where [" + colnm + "] is not null ; " +
+            //    " end ";
+
+            //  double bal = CalculateAmount(userId, noof_message, Convert.ToDouble(rate), smscount);
+            double bal = CalculateSMSCost(noof_message, Convert.ToDouble(rate));
+            sql = sql + " update customer set balance = balance - '" + bal + "' where username = '" + userId + "' end";
+
+
+            try
+            {
+                database.ExecuteNonQuery(sql);
+            }
+            catch (Exception ex)
+            {
+                LogError("Error in InsertSMSrecordsFromUSERTMP method !  ", ex.Message + " - " + ex.StackTrace);
+                throw ex;
+            }
+        }
+
+        public void Insert_SMS_BULK_4url(string UserID, string msg, string s, string schdate, int shortURLId, string shortURL, string domain, double rate, string SMSType, string filenm, string filenmext, DataTable dtAc, string campnm, bool ucs2, int noofsms, List<string> mobList, string manual, string retarget, string TemplateID, string country_code, double PrevBalance = 0, double AvailableBalance = 0, string tmpfilenm = "")
+        {
+            string user = "tmp_" + UserID;
+
+            if (manual == "MANUAL")
+            {
+                database.ExecuteNonQuery("if exists (select * from sys.tables where name='" + user + @"') drop table " + user + @"; Create table " + user + @" (MobileNo numeric) ;  ");
+                foreach (var m in mobList)
+                {
+                    database.ExecuteNonQuery(" Insert into " + user + @" values ('" + country_code + m + "')");
+                }
+
+                database.ExecuteNonQuery("delete d from " + user + @" d inner join globalBlackListNo b on b.mobile=d.MobileNo ");
+                /*rabi 14 jul 21*/
+                string sqlRestict = @"if exists(select * from smsrestrictmobile srm join [smsrestriction] sr on srm.smsrestrictionid=sr.id where userid='" + UserID + "' AND TYPE='U')" +
+                    " delete d from " + user + @" d inner join SMSRestrictmobile SRM on SRM.MobileNo='91'+d.MobileNo  join [SMSRestriction] SR on SRM.SMSRestrictioniD=SR.Id 
+                     WHERE UserId='" + UserID + "' AND TYPE='U' if exists(select * from smsrestrictmobile srm join [smsrestriction] sr on srm.smsrestrictionid=sr.id where SenderId='" + s + "' AND TYPE='S')" +
+                     " delete d from " + user + @" d inner join SMSRestrictmobile SRM on SRM.MobileNo='91'+d.MobileNo  join [SMSRestriction] SR on SRM.SMSRestrictioniD=SR.Id  WHERE SenderId='" + s + "' AND TYPE='S'";
+                database.ExecuteNonQuery(sqlRestict);
+
+            }
+
+            string colnm = Convert.ToString(database.GetScalarValue("if exists (select * from sys.tables where name='" + user + @"') select column_name From information_schema.columns where table_name = '" + user + @"' and ordinal_position = 1 else select '' "));
+            if (country_code != "" && manual != "MANUAL")
+                database.ExecuteNonQuery("if exists (select * from sys.tables where name='" + user + @"') update " + user + @" set [" + colnm + "] = '" + country_code + "'+convert(varchar,convert(bigint,[" + colnm + "])) ");
+
+            checkNumberDigitsAndUpdate(user, colnm);
+
+            string peid = getPEid(UserID);
+            string sql;
+            sql = GetSqlAccounts(dtAc);
+            DataTable dt = database.GetDataTable(sql);
+
+            Int32 rowcnt = Convert.ToInt32(database.GetScalarValue("if exists (select * from sys.tables where name='" + user + @"') select count(*) from " + user + @" else select 0 "));
+            dt.Columns.Add("cnt", typeof(string));
+
+            int totalPDU = 0;
+            for (int i = 0; i < dt.Rows.Count; i++) totalPDU += Convert.ToInt16(dt.Rows[i]["PDUSIZE"]);
+            Int32 totcnt = 0;
+            for (int i = 0; i < dt.Rows.Count; i++)
+            {
+                double per = (Convert.ToDouble(dt.Rows[i]["PDUSIZE"]) * 100) / Convert.ToDouble(totalPDU);
+                Int32 cntrow = Convert.ToInt32(rowcnt * (per / 100));
+                totcnt += cntrow;
+                dt.Rows[i]["cnt"] = cntrow.ToString();
+            }
+            int dif = 0;
+            if (totcnt < rowcnt)
+            {
+                dif = rowcnt - totcnt;
+                for (int i = 0; i < dt.Rows.Count; i++)
+                    dt.Rows[i]["cnt"] = Convert.ToString(Convert.ToInt32(dt.Rows[i]["cnt"]) + 1);
+            }
+
+            //Int32 cnt = (rowcnt / dt.Rows.Count);
+            //if (rowcnt % dt.Rows.Count > 0) cnt++;
+
+            database.ExecuteNonQuery("IF not EXISTS(SELECT 1 FROM sys.columns WHERE Name = N'SMPPACCOUNTID' AND Object_ID = Object_ID(N'" + user + "')) " +
+                " alter table " + user + @" add smppaccountid numeric(10) , shortsegment varchar(10) "); //add new column
+
+            //database.ExecuteNonQuery("alter table " + user + @" add smppaccountid numeric(10), shortsegment varchar(10) ");
+
+            for (int i = 0; i < dt.Rows.Count; i++)
+            {
+                sql = "update top (" + dt.Rows[i]["cnt"].ToString() + ") " + user + @" set smppaccountid = '" + dt.Rows[i]["smppaccountid"].ToString() + "' where smppaccountid is null ";
+                database.ExecuteNonQuery(sql);
+            }
+
+            sql = "update " + user + @" set shortsegment=left(NEWID(),8) ";
+            database.ExecuteNonQuery(sql);
+            //change SMPP ACCOUNT based on SMSTYPE
+
+            double CampaignCost = PrevBalance - AvailableBalance;
+
+            msg = msg.Replace("'", "''"); filenm = filenm.Replace("'", "''");
+            sql = @" Insert into SMSFILEUPLOAD (USERID,FILENM,EXTENSION,RECCOUNT,senderid,campaignname,smsrate,shortURLId,PrevBalance,CampaignCost,AvailableBalance,tmpFN,COUNTRYCODE) values ('" + UserID + "','" + filenm + "','" + filenmext + "','" + rowcnt.ToString() + "','" + s + "','" + campnm + "','" + rate + "','" + Convert.ToString(shortURLId) + "','" + PrevBalance + "','" + CampaignCost + "','" + AvailableBalance + "','" + tmpfilenm + "','" + country_code + "') " +
+                " declare @id numeric(10) select @id = max(id) from SMSFILEUPLOAD where userid='" + UserID + "' ; ";
+
+            //call sms test function test - get true / false
+            if (Helper.Global.Istemplatetest == false)
+            {
+                sql = sql + " select t.* into #t_01 from " + user + " t " +
+                    " delete d from " + user + " d inner join #t_01 t on d.[" + colnm + "] = t.[" + colnm + "]  ;  " +
+                    " alter table #t_01 add msgid varchar (100) ;  ";
+
+                for (int x = 0; x < noofsms; x++)
+                {
+                    string smsTex = GetSMSText(msg, x + 1, noofsms, ucs2);
+                    sql = sql + " update #t_01 set msgid=newid() " +
+                    " Insert into msgsubmitted (ID,PROVIDER,SMPPACCOUNTID,PROFILEID,MSGTEXT,TOMOBILE,SENDERID,CREATEDAT,SENTDATETIME,MSGID,INSERTDATE,FILEID,NSEND,smstext,smsrate) " +
+                    " select @id as id,'vcon',smppaccountid,'" + UserID + "',REPLACE(N'" + smsTex + "','" + shortURL + "','" + domain + "' + shortsegment),[" + colnm + "] as TOMOBILE,'" + s + "',GETDATE(),GETDATE(),msgid,getdate(),@id as fileid,'1'," +
+                    " REPLACE(N'" + msg + "','" + shortURL + "','" + domain + "' + shortsegment),'" + rate + "' from #t_01 ; " +
+                    " Insert into delivery (DLVRTEXT,MSGID,DLVRTIME,DLVRSTATUS,err_code,INSERTDATE) " +
+                    @" select 'id:' + MSGID + ' sub:001 dlvrd:001 submit date:' + RIGHT(CONVERT(VARCHAR,getdate(),112),6) + REPLACE(CONVERT(VARCHAR,getdate(),108),':','') + 
+                    ' done date:' + RIGHT(CONVERT(VARCHAR, GETDATE(), 112), 6) + REPLACE(CONVERT(VARCHAR, GETDATE(), 108), ':', '') + ' stat:UNDELIV err:" + Helper.Global.templateErrorCode + @" text:' AS DLVRTEXT, MSGID, GETDATE(), 'Undeliverable','" + Helper.Global.templateErrorCode + @"',getdate()
+                    FROM #t_01 ; ";
+                }
+
+                sql = sql + " insert into mobtrackurl(urlid, mobile, sentdate, segment,fileid,templateid) select " +
+               "'" + shortURLId.ToString() + "', [" + colnm + "] , getdate(),shortsegment,@id as fileid,'" + TemplateID + "' as templateid from #t_01 where [" + colnm + "] is not null ";
+
+            }
+            else
+            {
+                double Bper = GetBlockSMSper(UserID, "B");
+                if (Bper != 0 && retarget == "")
+                {
+                    Int32 cnt20 = Convert.ToInt32(Convert.ToDouble(rowcnt) * Bper);
+                    sql = sql + " select top " + cnt20 + " * into #t10 from " + user + " where [" + colnm + "] is not null and [" + colnm + "] not in (" + getWhiteListNo(UserID) + ") ORDER BY NEWID() " +
+                        " delete d from " + user + " d inner join #t10 t on d.[" + colnm + "] = t.[" + colnm + "]  ;  " +
+                        " alter table #t10 add msgid varchar (100) ; ";
+
+                    for (int x = 0; x < noofsms; x++)
+                    {
+                        string smsTex = GetSMSText(msg, x + 1, noofsms, ucs2);
+                        sql = sql + " update #t10 set msgid=newid() " +
+                        @" insert into notsubmitted (ID,PROVIDER,SMPPACCOUNTID,PROFILEID,MSGTEXT,TOMOBILE,SENDERID,CREATEDAT,SENTDATETIME,MSGID,INSERTDATE,FILEID,NSEND,smsrate)
+                        select @id as id,'vcon',smppaccountid,'" + UserID + "',REPLACE(N'" + smsTex + "','" + shortURL + "','" + domain + "' + shortsegment) ,[" + colnm + "] as TOMOBILE,'" + s + "',GETDATE(),GETDATE(),msgid,getdate(),@id as fileid,'1','" + rate + "' from #t10 ; " +
+                            " Insert into msgsubmitted (ID,PROVIDER,SMPPACCOUNTID,PROFILEID,MSGTEXT,TOMOBILE,SENDERID,CREATEDAT,SENTDATETIME,MSGID,INSERTDATE,FILEID,NSEND,smstext,smsrate) " +
+                            " select @id as id,'vcon',smppaccountid,'" + UserID + "',REPLACE(N'" + smsTex + "','" + shortURL + "','" + domain + "' + shortsegment) ,[" + colnm + "] as TOMOBILE,'" + s + "',GETDATE(),GETDATE(),msgid,getdate(),@id as fileid,'1'," +
+                            " REPLACE(N'" + msg + "','" + shortURL + "','" + domain + "' + shortsegment) ,'" + rate + "' from #t10 ; ";
+                    }
+                }
+                double Fper = GetBlockSMSper(UserID, "F");
+                if (Fper != 0 && retarget == "")
+                {
+                    Int32 cnt20 = Convert.ToInt32(Convert.ToDouble(rowcnt) * Fper);
+                    sql = sql + " select top " + cnt20 + " * into #t101 from " + user + " where [" + colnm + "] is not null and [" + colnm + "] not in (" + getWhiteListNo(UserID) + ") ORDER BY NEWID() " +
+                        " delete d from " + user + " d inner join #t101 t on d.[" + colnm + "] = t.[" + colnm + "]  ;  " +
+                        " alter table #t101 add msgid varchar (100) ; ";
+
+                    for (int x = 0; x < noofsms; x++)
+                    {
+                        string smsTex = GetSMSText(msg, x + 1, noofsms, ucs2);
+                        sql = sql + " update #t101 set msgid=newid() " +
+                        @" insert into FAILSUBMITTED (ID,PROVIDER,SMPPACCOUNTID,PROFILEID,MSGTEXT,TOMOBILE,SENDERID,CREATEDAT,SENTDATETIME,MSGID,INSERTDATE,FILEID,NSEND,smsrate)
+                        select @id as id,'vcon',smppaccountid,'" + UserID + "',REPLACE(N'" + smsTex + "','" + shortURL + "','" + domain + "' + shortsegment) ,[" + colnm + "] as TOMOBILE," +
+                            "'" + s + "',GETDATE(),GETDATE(),msgid,getdate(),@id as fileid,'1','" + rate + "' from #t101 ; " +
+                            " Insert into msgsubmitted (ID,PROVIDER,SMPPACCOUNTID,PROFILEID,MSGTEXT,TOMOBILE,SENDERID,CREATEDAT,SENTDATETIME,MSGID,INSERTDATE,FILEID,NSEND,smstext,smsrate) " +
+                            " select @id as id,'vcon',smppaccountid,'" + UserID + "',REPLACE(N'" + smsTex + "','" + shortURL + "','" + domain + "' + shortsegment) ,[" + colnm + "] as TOMOBILE,'" + s + "',GETDATE(),GETDATE(),msgid,getdate(),@id as fileid,'1'," +
+                            " REPLACE(N'" + msg + "','" + shortURL + "','" + domain + "' + shortsegment) ,'" + rate + "' from #t101 ; ";
+                    }
+                }
+                bool blu = blacklistuser(UserID);
+                if (blu)
+                {
+                    sql = sql + " select t.* into #t11 from " + user + " t left join BLACKLISTNO b on t.[" + colnm + "]=b.MOBILENO and b.userid='" + UserID + "' where b.MOBILENO is not null " +
+                        " delete d from " + user + " d inner join #t11 t on d.[" + colnm + "] = t.[" + colnm + "]  ;  " +
+                        " alter table #t11 add msgid varchar (100) ;  ";
+
+                    for (int x = 0; x < noofsms; x++)
+                    {
+                        string smsTex = GetSMSText(msg, x + 1, noofsms, ucs2);
+                        sql = sql + " update #t11 set msgid=newid() " +
+                        " Insert into msgsubmitted (ID,PROVIDER,SMPPACCOUNTID,PROFILEID,MSGTEXT,TOMOBILE,SENDERID,CREATEDAT,SENTDATETIME,MSGID,INSERTDATE,FILEID,NSEND,smstext,smsrate) " +
+                        " select @id as id,'vcon',smppaccountid,'" + UserID + "',REPLACE(N'" + smsTex + "','" + shortURL + "','" + domain + "' + shortsegment),[" + colnm + "] as TOMOBILE,'" + s + "',GETDATE(),GETDATE(),msgid,getdate(),@id as fileid,'1'," +
+                        " REPLACE(N'" + msg + "','" + shortURL + "','" + domain + "' + shortsegment),'" + rate + "' from #t11 ; " +
+                        " Insert into delivery (DLVRTEXT,MSGID,DLVRTIME,DLVRSTATUS,err_code,INSERTDATE) " +
+                        @" select 'id:' + MSGID + ' sub:001 dlvrd:001 submit date:' + RIGHT(cONVERT(VARCHAR,getdate(),112),6) + REPLACE(cONVERT(VARCHAR,getdate(),108),':','') + 
+                    ' done date:' + RIGHT(cONVERT(VARCHAR, GETDATE(), 112), 6) + REPLACE(cONVERT(VARCHAR, GETDATE(), 108), ':', '') + ' stat:BlackList err:250 text:' AS DLVRTEXT, MSGID, GETDATE(), 'BlackList','250',getdate()
+                    FROM #t11 ; ";
+                    }
+                }
+
+                bool isMobProcess = MobProcessUser(UserID);
+                if (isMobProcess)
+                {
+                    //PROCESS FAIL
+                    sql = sql + " select t.*,s.err_code into #mt11 from " + user + " t inner join BLOCKSMSERROR s with (nolock) on s.profileid='" + UserID + "' inner join UserMobile b with (nolock) on t.[" + colnm + "]=b.TOMOBILE and b.Profileid=s.profileid and s.err_code=b.err_code where s.DORF='F' " +
+                        " delete d from " + user + " d inner join #mt11 t on d.[" + colnm + "] = t.[" + colnm + "]  ;  " +
+                        " alter table #mt11 add msgid varchar (100) ;  ";
+
+                    for (int x = 0; x < noofsms; x++)
+                    {
+                        string smsTex = GetSMSText(msg, x + 1, noofsms, ucs2);
+                        sql = sql + " update #mt11 set msgid=newid() " +
+                        " Insert into msgsubmitted (ID,PROVIDER,SMPPACCOUNTID,PROFILEID,MSGTEXT,TOMOBILE,SENDERID,CREATEDAT,SENTDATETIME,MSGID,INSERTDATE,FILEID,NSEND,smstext,smsrate) " +
+                        " select @id as id,'vcon',smppaccountid,'" + UserID + "',REPLACE(N'" + smsTex + "','" + shortURL + "','" + domain + "' + shortsegment),[" + colnm + "] as TOMOBILE,'" + s + "',GETDATE(),GETDATE(),msgid,getdate(),@id as fileid,'1'," +
+                        " REPLACE(N'" + msg + "','" + shortURL + "','" + domain + "' + shortsegment),'" + rate + "' from #mt11 ; " +
+                        " Insert into delivery (DLVRTEXT,MSGID,DLVRTIME,DLVRSTATUS,err_code,INSERTDATE) " +
+                        @" select 'id:' + MSGID + ' sub:001 dlvrd:000 submit date:' + RIGHT(cONVERT(VARCHAR,getdate(),112),6) + REPLACE(cONVERT(VARCHAR,getdate(),108),':','') + 
+                    ' done date:' + RIGHT(cONVERT(VARCHAR, GETDATE(), 112), 6) + REPLACE(cONVERT(VARCHAR, GETDATE(), 108), ':', '') + ' stat:UNDELIV err:' + convert(varchar,err_code COLLATE SQL_Latin1_General_CP1_CI_AS) + ' text:' AS DLVRTEXT, MSGID, GETDATE(), 'Undeliverable',err_code,getdate()
+                    FROM #mt11 ; ";
+                    }
+
+                    //PROCESS DELIVERY
+                    sql = sql + " select t.* into #Dmt11 from " + user + " t inner join BLOCKSMSERROR s with (nolock) on s.profileid='" + UserID + "' inner join UserMobile b with (nolock) on t.[" + colnm + "]=b.TOMOBILE and b.Profileid=s.profileid and s.err_code=b.err_code where s.DORF='D' " +
+                        " delete d from " + user + " d inner join #Dmt11 t on d.[" + colnm + "] = t.[" + colnm + "]  ;  " +
+                        " alter table #Dmt11 add msgid varchar (100) ;  ";
+
+                    for (int x = 0; x < noofsms; x++)
+                    {
+                        string smsTex = GetSMSText(msg, x + 1, noofsms, ucs2);
+                        sql = sql + " update #Dmt11 set msgid=newid() " +
+                        " Insert into msgsubmitted (ID,PROVIDER,SMPPACCOUNTID,PROFILEID,MSGTEXT,TOMOBILE,SENDERID,CREATEDAT,SENTDATETIME,MSGID,INSERTDATE,FILEID,NSEND,smstext,smsrate) " +
+                        " select @id as id,'vcon',smppaccountid,'" + UserID + "',REPLACE(N'" + smsTex + "','" + shortURL + "','" + domain + "' + shortsegment),[" + colnm + "] as TOMOBILE,'" + s + "',GETDATE(),GETDATE(),msgid,getdate(),@id as fileid,'1'," +
+                        " REPLACE(N'" + msg + "','" + shortURL + "','" + domain + "' + shortsegment),'" + rate + "' from #Dmt11 ; " +
+                        " Insert into delivery (DLVRTEXT,MSGID,DLVRTIME,DLVRSTATUS,err_code,INSERTDATE) " +
+                        @" select 'id:' + MSGID + ' sub:001 dlvrd:001 submit date:' + RIGHT(cONVERT(VARCHAR,getdate(),112),6) + REPLACE(cONVERT(VARCHAR,getdate(),108),':','') + 
+                    ' done date:' + RIGHT(cONVERT(VARCHAR, GETDATE(), 112), 6) + REPLACE(cONVERT(VARCHAR, GETDATE(), 108), ':', '') + ' stat:DELIVRD err:000 text:' AS DLVRTEXT, MSGID, GETDATE(), 'Delivered','000',getdate()
+                    FROM #Dmt11 ; ";
+                    }
+                }
+
+                bool ClkBlk = ClickListUser(UserID);
+                string isdlr = "";
+                if (ClkBlk)
+                {
+                    DataTable dtCl = database.GetDataTable("Select * from ClickDataBlock where userid='" + UserID + "'");
+                    string noofdays = dtCl.Rows[0]["noofdays"].ToString();
+                    isdlr = dtCl.Rows[0]["ProcessType"].ToString();
+                    sql = sql + " select t.* into #t12 from " + user + " t inner join MobTrackURL m on m.urlid='" + shortURLId.ToString() + "' and t.[" + colnm + "]=m.mobile inner join (select distinct urlid from mobstats where shorturl_id='" + shortURLId.ToString() + "') s on m.id=s.urlid where m.sentdate >= DateAdd(Day,-" + noofdays + ",getdate()) ";
+                    sql = sql + " delete d from " + user + " d inner join #t12 t on d.[" + colnm + "] = t.[" + colnm + "]  ;  alter table #t12 add msgid varchar (100) ;  ";
+                    if (isdlr.ToUpper() == "DELIVERED")
+                    {
+                        for (int x = 0; x < noofsms; x++)
+                        {
+                            string smsTex = GetSMSText(msg, x + 1, noofsms, ucs2);
+                            sql = sql + " update #t12 set msgid=newid() " +
+                            " Insert into msgsubmitted (ID,PROVIDER,SMPPACCOUNTID,PROFILEID,MSGTEXT,TOMOBILE,SENDERID,CREATEDAT,SENTDATETIME,MSGID,INSERTDATE,FILEID,NSEND,smstext,smsrate) " +
+                            " select @id as id,'vcon',smppaccountid,'" + UserID + "',REPLACE(N'" + smsTex + "','" + shortURL + "','" + domain + "' + shortsegment),[" + colnm + "] as TOMOBILE,'" + s + "',GETDATE(),GETDATE(),msgid,getdate(),@id as fileid,'1'," +
+                            " REPLACE(N'" + msg + "','" + shortURL + "','" + domain + "' + shortsegment),'" + rate + "' from #t12 ; " +
+                            " Insert into delivery (DLVRTEXT,MSGID,DLVRTIME,DLVRSTATUS,err_code,INSERTDATE) " +
+                            @" select 'id:' + MSGID + ' sub:001 dlvrd:001 submit date:' + RIGHT(cONVERT(VARCHAR,getdate(),112),6) + REPLACE(cONVERT(VARCHAR,getdate(),108),':','') + 
+                        ' done date:' + RIGHT(cONVERT(VARCHAR, GETDATE(), 112), 6) + REPLACE(cONVERT(VARCHAR, GETDATE(), 108), ':', '') + ' stat:DELIVRD err:000 text:' AS DLVRTEXT, MSGID, GETDATE(), 'Delivered','000',getdate()
+                        FROM #t12 ; ";
+                        }
+                    }
+                    //if (isdlr.ToUpper() == "NOSUBMISSION")
+                    //{
+                    //    sql = sql + " delete d from " + user + " d inner join #t12 t on d.[" + colnm + "] = t.[" + colnm + "]  ;  ";
+                    //}
+                }
+
+                string dataCode = "";
+                if (SMSType == "8")
+                {
+                    if (ucs2)
+                        dataCode = "UnicodeFlashSMS";
+                    else
+                        dataCode = "DefaultFlashSMS";
+                }
+                else
+                {
+                    if (ucs2)
+                        dataCode = "UCS2";
+                    else
+                        dataCode = "Default";
+                }
+
+                sql = sql + @" INSERT INTO MSGTRAN (PROVIDER,SMPPACCOUNTID,PROFILEID,MSGTEXT,TOMOBILE,SENDERID,CREATEDAT,FILEID,peid,DATACODE,smsrate,templateid)
+                select 'VCON',smppaccountid,'" + UserID + "',REPLACE(N'" + msg + "','" + shortURL + "','" + domain + "' + shortsegment) ,[" + colnm + "] as TOMOBILE,'" + s + "',GETDATE(),@id as fileid,'" + peid + "' as peid,'" + dataCode + "' AS DATACODE,'" + rate.ToString() + "' as smsrate,'" + TemplateID + "' as templateid from " + user + " where [" + colnm + "] is not null ";
+                //database.ExecuteNonQuery(sql);
+                if (Bper != 0 && retarget == "")
+                {
+                    sql = sql + " insert into mobtrackurl (urlid, mobile, sentdate, segment,fileid,templateid) select " +
+                   "'" + shortURLId.ToString() + "', [" + colnm + "] , getdate(),shortsegment,@id as fileid,'" + TemplateID + "' as templateid from #t10 where [" + colnm + "] is not null ";
+                }
+                if (Fper != 0 && retarget == "")
+                {
+                    sql = sql + " insert into mobtrackurl (urlid, mobile, sentdate, segment,fileid,templateid) select " +
+                   "'" + shortURLId.ToString() + "', [" + colnm + "] , getdate(),shortsegment,@id as fileid,'" + TemplateID + "' as templateid   from #t101 where [" + colnm + "] is not null ";
+                }
+                if (blu)
+                {
+                    sql = sql + " insert into mobtrackurl (urlid, mobile, sentdate, segment,fileid,templateid) select " +
+                   "'" + shortURLId.ToString() + "', [" + colnm + "] , getdate(),shortsegment,@id as fileid,'" + TemplateID + "' as templateid  from #t11 where [" + colnm + "] is not null ";
+                }
+                if (ClkBlk)
+                {
+                    if (isdlr.ToUpper() == "DELIVERED")
+                    {
+                        sql = sql + " insert into mobtrackurl (urlid, mobile, sentdate, segment,fileid,templateid) select " +
+                        "'" + shortURLId.ToString() + "', [" + colnm + "] , getdate(),shortsegment,@id as fileid,'" + TemplateID + "' as templateid  from #t12 where [" + colnm + "] is not null ";
+                    }
+                }
+                sql = sql + " insert into mobtrackurl (urlid, mobile, sentdate, segment,fileid,templateid) select " +
+                   "'" + shortURLId.ToString() + "', [" + colnm + "] , getdate(),shortsegment,@id as fileid,'" + TemplateID + "' as templateid  from " + user + " where [" + colnm + "] is not null ";
+
+                // double bal = CalculateAmount(UserID, noof_message, rate, smscount);
+                double bal = CalculateSMSCost(noof_message, Convert.ToDouble(rate));
+                sql = sql + " update customer set balance = balance - '" + bal + "' where username = '" + UserID + "'";
+
+            }
+
+            try
+            {
+                database.ExecuteNonQuery(sql);
+            }
+            catch (Exception ex)
+            {
+                LogError("Error in Insert_SMS_BULK_4url method !  ", ex.Message + " - " + ex.StackTrace + " -- " + sql);
+                throw ex;
+            }
+
+        }
+        // ---<-------------- SMS SENDING METHODS ----------------
+
+
+        // --->----------------- SMS SENDING METHODS B4 SEND ---------------
+        public void B4SEND_Schedule_SMS(string UserID, string mobile, string msg, string s, string schdate, int shortURLId, string shortURL, string domain, string segment, double rate, string SMSType, DataTable dtAc, bool ucs2, string TemplateID, string country_code)
+        {
+            mobile = country_code + mobile;
+            if (mobile.Length > 12)
+                mobile = mobile.Substring(mobile.Length - 12);
+            //change SMPP ACCOUNT based on SMSTYPE
+            msg = msg.Replace("'", "''");
+            string ACid = "101";
+
+            if (dtAc.Rows.Count > 0) ACid = dtAc.Rows[0]["SMPPACCOUNTID"].ToString() + "01";
+            string peid = getPEid(UserID);
+
+            bool b = checkblacklistno(UserID, mobile);
+            //if(b) b= checkwhitelistno(UserID, mobile);
+
+            string dataCode = "";
+            if (SMSType == "8")
+            {
+                if (ucs2)
+                    dataCode = "UnicodeFlashSMS";
+                else
+                    dataCode = "DefaultFlashSMS";
+            }
+            else
+            {
+                if (ucs2)
+                    dataCode = "UCS2";
+                else
+                    dataCode = "Default";
+            }
+
+            string q1 = "select defaultCountry from CUSTOMER with(nolock) where username='" + UserID + "' ";
+            int timedifferenceInMinute = Convert.ToInt32(database.GetScalarValue("select timedifferenceInMinute from tblCountry where counryCode in(" + q1 + ")"));
+            //RACHIT 03-02-22
+            // --->>
+            //string sql = @"INSERT INTO MsgSchedule (PROVIDER,SMPPACCOUNTID,PROFILEID,MSGTEXT,TOMOBILE,SENDERID,CREATEDAT,SCHEDULE,MOBTRK,SHORTURL,URLID,NEWSEGMENT,SMSRATE,SMSTYPE,DOMAIN,peid,datacode,blacklist,TemplateID)
+            //VALUES ('VCON','" + ACid + "','" + UserID + "',N'" + msg + "','" + mobile + "','" + s + "',GETDATE(),dateadd(minute, " + Convert.ToString(Math.Abs(timedifferenceInMinute)) + ", '" + schdate + "'),'" +
+            //(shortURLId > 0 ? "Y" : "N") + "','" + shortURL + "','" + shortURLId.ToString() + "','" + segment + "','" + rate.ToString() + "','" + SMSType + "','" + domain + "','" + peid + "','" + dataCode + "','" + (b ? 1 : 0) + "','" + TemplateID + "')";
+
+            string sql = " Insert into SMSFILEUPLOAD (USERID,senderid,schedule,campaignname,SMSRATE,shortURLId,COUNTRYCODE) values ('" + UserID + "','" + s + "','" + schdate + "','Manual','" + rate + "','" + Convert.ToString(shortURLId) + "','" + country_code + "')" +
+                  " declare @id numeric(10) select @id = max(id) from SMSFILEUPLOAD where userid='" + UserID + "' ;";
+
+            sql = sql + @" INSERT INTO MsgSchedule (PROVIDER,SMPPACCOUNTID,PROFILEID,MSGTEXT,TOMOBILE,SENDERID,CREATEDAT,SCHEDULE,MOBTRK,SHORTURL,URLID,NEWSEGMENT,SMSRATE,SMSTYPE,DOMAIN,peid,datacode,blacklist,TemplateID,FILEID)
+            VALUES ('VCON','" + ACid + "','" + UserID + "',N'" + msg + "','" + mobile + "','" + s + "',GETDATE(),dateadd(minute, " + timedifferenceInMinute + ", '" + schdate + "'),'" +
+            (shortURLId > 0 ? "Y" : "N") + "','" + shortURL + "','" + shortURLId.ToString() + "','" + segment + "','" + rate.ToString() + "','" + SMSType + "','" + domain + "','" + peid + "','" + dataCode + "','" + (b ? 1 : 0) + "','" + TemplateID + "',@id)";
+            // <<----
+
+
+            double bal = CalculateSMSCost(noof_message, Convert.ToDouble(rate));
+            //  double bal = CalculateAmount(UserID, noof_message, Convert.ToDouble(rate), 1);
+            sql = sql + " update customer set balance = balance - '" + bal + "' where username = '" + UserID + "'";
+            try
+            {
+                database.ExecuteNonQuery(sql);
+            }
+            catch (Exception ex)
+            {
+                LogError("Error in Schedule_SMS method !  ", ex.Message + " - " + ex.StackTrace);
+                throw ex;
+            }
+        }
+
+        public void B4SEND_SendURL_SMS(string UserID, string mobile, string msg, string s, DataTable dtAc, bool ucs2, bool bulk, double rate, int noofsms, string TemplateID, string countryCode, string SMSType, string fileId = "")
+        {
+            mobile = countryCode + mobile;
+            if (mobile.Length > 12)
+                mobile = mobile.Substring(mobile.Length - 12);
+            //change SMPP ACCOUNT based on SMSTYPE
+            string peid = getPEid(UserID);
+            msg = msg.Replace("'", "''");
+            string ACid = "";
+            if (bulk)
+            {
+                ACid = "105";
+                if (dtAc.Rows.Count > 0) ACid = dtAc.Rows[0]["SMPPACCOUNTID"].ToString() + "01";
+            }
+            else
+            {
+                ACid = "301";
+                if (dtAc.Rows.Count > 0) ACid = dtAc.Rows[0]["SMPPACCOUNTID"].ToString() + "05";
+            }
+            string sql = "";
+
+            if (checkblacklistno(UserID, mobile))
+            {
+                sql = @"DECLARE @nid varchar (100)  ";
+                for (int x = 0; x < noofsms; x++)
+                {
+                    string smsTex = GetSMSText(msg, x + 1, noofsms, ucs2);
+                    sql = sql + @" select @nid=newid()
+                    Insert into msgsubmitted(ID, PROVIDER, SMPPACCOUNTID, PROFILEID, MSGTEXT, TOMOBILE, SENDERID, CREATEDAT, SENTDATETIME, MSGID, INSERTDATE, FILEID, NSEND, smstext, smsrate) " +
+                    " select '1' as id,'vcon','" + ACid + "','" + UserID + "',N'" + smsTex + "','" + mobile + "' as TOMOBILE,'" + s + "',GETDATE(),GETDATE(),@nid,getdate(),'" + fileId + "' as fileid,'1'," +
+                    " N'" + msg + "','" + rate.ToString() + "' from settings ; " +
+                    " Insert into delivery (DLVRTEXT,MSGID,DLVRTIME,DLVRSTATUS,err_code,INSERTDATE) " +
+                    @" select 'id:' + @nid + ' sub:001 dlvrd:001 submit date:' + RIGHT(cONVERT(VARCHAR,getdate(),112),6) + REPLACE(cONVERT(VARCHAR,getdate(),108),':','') + 
+                    ' done date:' + RIGHT(cONVERT(VARCHAR, GETDATE(), 112), 6) + REPLACE(cONVERT(VARCHAR, GETDATE(), 108), ':', '') + ' stat:BlackList err:250 text:' AS DLVRTEXT, @nid, GETDATE(), 'BlackList','250',getdate()
+                    FROM settings ";
+                }
+            }
+            else
+            {
+                string st1 = checMobProcessNo(UserID, mobile);
+                if (st1 != "")
+                {
+                    string[] st2 = st1.Split(';');
+
+                    for (int x = 0; x < noofsms; x++)
+                    {
+                        string smsTex = GetSMSText(msg, x + 1, noofsms, ucs2);
+                        sql = sql + @" select @nid=newid()
+                        Insert into msgsubmitted(ID, PROVIDER, SMPPACCOUNTID, PROFILEID, MSGTEXT, TOMOBILE, SENDERID, CREATEDAT, SENTDATETIME, MSGID, INSERTDATE, FILEID, NSEND, smstext, smsrate) " +
+                        " select '1' as id,'vcon','" + ACid + "','" + UserID + "',N'" + smsTex + "','" + mobile + "' as TOMOBILE,'" + s + "',GETDATE(),GETDATE(),@nid,getdate(),'" + fileId + "' as fileid,'1'," +
+                        " N'" + msg + "','" + rate.ToString() + "' from settings ; ";
+                        if (st2[1] == "F")
+                        {
+                            sql = sql + @" Insert into delivery (DLVRTEXT,MSGID,DLVRTIME,DLVRSTATUS,err_code,INSERTDATE) " +
+                            @" select 'id:' + @nid + ' sub:001 dlvrd:000 submit date:' + RIGHT(cONVERT(VARCHAR,getdate(),112),6) + REPLACE(cONVERT(VARCHAR,getdate(),108),':','') + 
+                            ' done date:' + RIGHT(cONVERT(VARCHAR, GETDATE(), 112), 6) + REPLACE(cONVERT(VARCHAR, GETDATE(), 108), ':', '') + ' stat:UNDELIV err:" + st2[0] + @" text:' AS DLVRTEXT, @nid, GETDATE(), 'Undeliverable','" + st2[0] + @"',getdate()
+                            FROM settings ";
+                        }
+                        else
+                        {
+                            sql = sql + @" Insert into delivery (DLVRTEXT,MSGID,DLVRTIME,DLVRSTATUS,err_code,INSERTDATE) " +
+                            @" select 'id:' + @nid + ' sub:001 dlvrd:001 submit date:' + RIGHT(cONVERT(VARCHAR,getdate(),112),6) + REPLACE(cONVERT(VARCHAR,getdate(),108),':','') + 
+                            ' done date:' + RIGHT(cONVERT(VARCHAR, GETDATE(), 112), 6) + REPLACE(cONVERT(VARCHAR, GETDATE(), 108), ':', '') + ' stat:DELIVRD err:000 text:' AS DLVRTEXT, @nid, GETDATE(), 'Delivered','000',getdate()
+                            FROM settings ";
+                        }
+                    }
+                }
+
+                string dataCode = "";
+                if (SMSType == "8")
+                {
+                    if (ucs2)
+                        dataCode = "UnicodeFlashSMS";
+                    else
+                        dataCode = "DefaultFlashSMS";
+                }
+                else
+                {
+                    if (ucs2)
+                        dataCode = "UCS2";
+                    else
+                        dataCode = "Default";
+                }
+                sql = @"INSERT INTO [dbo].[MSGTRAN]
+                ([PROVIDER],[SMPPACCOUNTID],[PROFILEID],[MSGTEXT],[TOMOBILE],[SENDERID],[CREATEDAT],[PICKED_DATETIME],[peid],[DATACODE],[smsrate],[TemplateID],FILEID) VALUES
+                ('BSNL', '" + ACid + "', '" + UserID + @"',N'" + msg.Trim() + @"', '" + mobile + @"', '" + s + @"', GETDATE(), NULL,'" + peid + "','" + dataCode + "','" + rate.ToString() + "','" + TemplateID + "','" + fileId + "')";
+            }
+
+            // double bal = CalculateAmount(UserID, noof_message, Convert.ToDouble(rate), smscount);
+            double bal = CalculateSMSCost(noof_message, Convert.ToDouble(rate));
+
+            sql = sql + " update customer set balance = balance - '" + bal + "' where username = '" + UserID + "'";
+
+            try
+            {
+                database.ExecuteNonQuery(sql);
+            }
+            catch (Exception ex)
+            {
+                LogError("Error in SendURL_SMS method !  ", ex.Message + " - " + ex.StackTrace);
+                throw ex;
+            }
+
+        }
+
+        public void B4SEND_Schedule_SMS_BULK(string UserID, string msg, string s, string schdate, int shortURLId, string shortURL, string domain, double rate, string SMSType, string filenm, string filenmext, DataTable dtAc, string campnm, bool ucs2, List<string> mobList, string manual, string TemplateID, string country_code, double PrevBalance = 0, double AvailableBalance = 0, string tmpfilenm = "")
+        {
+            string user = "tmp_" + UserID;
+
+            if (manual == "MANUAL")
+            {
+                database.ExecuteNonQuery("if exists (select * from sys.tables where name='" + user + @"') drop table " + user + @"; Create table " + user + @" (MobileNo numeric) ;  ");
+                foreach (var m in mobList)
+                {
+                    database.ExecuteNonQuery(" Insert into " + user + @" values ('" + m + "')");
+                }
+                database.ExecuteNonQuery("delete d from " + user + @" d inner join globalBlackListNo b on b.mobile=d.MobileNo ");
+                /*rabi 14 jul 21*/
+                database.ExecuteNonQuery(" if exists(select * from smsrestrictmobile srm join [smsrestriction] sr on srm.smsrestrictionid=sr.id where userid='" + UserID + "' AND TYPE='U') delete d from " + user + @" d inner join SMSRestrictmobile SRM on SRM.MobileNo='91'+d.MobileNo  join [SMSRestriction] SR on SRM.SMSRestrictioniD=SR.Id  WHERE UserId='" + UserID + "' AND TYPE='U' if exists(select * from smsrestrictmobile srm join [smsrestriction] sr on srm.smsrestrictionid=sr.id where SenderId='" + s + "' AND TYPE='S') delete d from " + user + @" d inner join SMSRestrictmobile SRM on SRM.MobileNo='91'+d.MobileNo  join [SMSRestriction] SR on SRM.SMSRestrictioniD=SR.Id  WHERE SenderId='" + s + "' AND TYPE='S'");
+            }
+
+
+            string q1 = "select defaultCountry from CUSTOMER with(nolock) where username='" + UserID + "' ";
+            int timedifferenceInMinute = Convert.ToInt32(database.GetScalarValue("select timedifferenceInMinute from tblCountry where counryCode in(" + q1 + ")"));
+
+
+            string colnm = Convert.ToString(database.GetScalarValue("if exists (select * from sys.tables where name='" + user + @"') select column_name From information_schema.columns where table_name = '" + user + @"' and ordinal_position = 1 else select '' "));
+
+            string sqlUpd = "if exists (select * from sys.tables where name='" + user + @"') update " + user + @" set [" + colnm + "] = '" + country_code + "'+convert(varchar,convert(bigint,[" + colnm + "])) ";
+            database.ExecuteNonQuery(sqlUpd);
+
+            checkNumberDigitsAndUpdate(user, colnm);
+
+            string sql = GetSqlAccounts(dtAc);
+
+            DataTable dt = database.GetDataTable(sql);
+
+            Int32 rowcnt = Convert.ToInt32(database.GetScalarValue("if exists (select * from sys.tables where name='" + user + @"') select count(*) from " + user + @" else select 0 "));
+
+            dt.Columns.Add("cnt", typeof(string));
+
+            int totalPDU = 0;
+            for (int i = 0; i < dt.Rows.Count; i++) totalPDU += Convert.ToInt16(dt.Rows[i]["PDUSIZE"]);
+            Int32 totcnt = 0;
+            for (int i = 0; i < dt.Rows.Count; i++)
+            {
+                double per = (Convert.ToDouble(dt.Rows[i]["PDUSIZE"]) * 100) / Convert.ToDouble(totalPDU);
+                Int32 cntrow = Convert.ToInt32(rowcnt * (per / 100));
+                totcnt += cntrow;
+                dt.Rows[i]["cnt"] = cntrow.ToString();
+            }
+            int dif = 0;
+            if (totcnt < rowcnt)
+            {
+                dif = rowcnt - totcnt;
+                for (int i = 0; i < dt.Rows.Count; i++)
+                    dt.Rows[i]["cnt"] = Convert.ToString(Convert.ToInt32(dt.Rows[i]["cnt"]) + 1);
+            }
+            //Int32 cnt = (rowcnt / dt.Rows.Count);
+            //if (rowcnt % dt.Rows.Count > 0) cnt++;
+            database.ExecuteNonQuery("IF not EXISTS(SELECT 1 FROM sys.columns WHERE Name = N'SMPPACCOUNTID' AND Object_ID = Object_ID(N'" + user + "')) " +
+                " alter table " + user + @" add smppaccountid numeric(10)"); //add new column
+
+            //  database.ExecuteNonQuery("alter table " + user + @" add smppaccountid numeric(10) ");
+
+            for (int i = 0; i < dt.Rows.Count; i++)
+            {
+                sql = "update top (" + dt.Rows[i]["cnt"].ToString() + ") " + user + @" set smppaccountid = '" + dt.Rows[i]["smppaccountid"].ToString() + "' where smppaccountid is null ";
+                database.ExecuteNonQuery(sql);
+            }
+            double CampaignCost = PrevBalance - AvailableBalance;
+            //change SMPP ACCOUNT based on SMSTYPE
+            msg = msg.Replace("'", "''");
+            string peid = getPEid(UserID);
+            sql = @"Insert into SMSFILEUPLOAD (USERID,FILENM,EXTENSION,RECCOUNT,senderid,schedule,campaignname,SMSRATE,shortURLId,PrevBalance,CampaignCost,AvailableBalance,tmpFN,COUNTRYCODE) values ('" + UserID + "','" + filenm + "','" + filenmext + "','" + rowcnt.ToString() + "','" + s + "','" + schdate + "','" + campnm + "','" + rate + "','" + Convert.ToString(shortURLId) + "','" + PrevBalance + "','" + CampaignCost + "','" + AvailableBalance + "','" + tmpfilenm + "','" + country_code + "') " +
+                " declare @id numeric(10) select @id = max(id) from SMSFILEUPLOAD where userid='" + UserID + "' ; " +
+                " INSERT INTO MsgSchedule (PROVIDER,SMPPACCOUNTID,PROFILEID,MSGTEXT,TOMOBILE,SENDERID,CREATEDAT,SCHEDULE,MOBTRK,SHORTURL,URLID,NEWSEGMENT,SMSRATE,SMSTYPE,DOMAIN,FILEID,peid,DATACODE,blacklist,TemplateID) " +
+            " select 'VCON',u.smppaccountid,'" + UserID + "',N'" + msg + "',u.[" + colnm + "] as TOMOBILE,'" + s + "',GETDATE(),dateadd(minute, " + Convert.ToString(Math.Abs(timedifferenceInMinute)) + ", '" + schdate + "'),'" +
+            (shortURLId > 0 ? "Y" : "N") + "','" + shortURL + "','" + shortURLId.ToString() + "'," + (shortURLId > 0 ? "left(NEWID(),8)" : "null") + ",'" + rate.ToString() + "','" + SMSType + "','" +
+            domain + "',@id,'" + peid + "','" + (ucs2 ? "UCS2" : "Default") + "',case when b.mobileno is not null then 1 else 0 end as blacklist,'" + TemplateID + "' as TemplateID from " + user + " u left join blacklistno b on u.[" + colnm + "]=b.mobileno and b.userid='" + UserID + "' where u.[" + colnm + "] is not null ; ";
+
+            double Bper = GetBlockSMSper(UserID, "B");
+            if (Bper != 0)
+            {
+                Int32 cnt20 = Convert.ToInt32(Convert.ToDouble(rowcnt) * Bper);
+                sql = sql + " update top (" + cnt20 + ") MsgSchedule set blockno=1 where profileid='" + UserID + "' and schedule=dateadd(minute, " + Convert.ToString(Math.Abs(timedifferenceInMinute)) + ", '" + schdate + "') and isnull(blacklist,0)=0 and fileid=@id and Tomobile not in (" + getWhiteListNo(UserID) + ") ";
+            }
+            double Fper = GetBlockSMSper(UserID, "F");
+            if (Fper != 0)
+            {
+                Int32 cnt20 = Convert.ToInt32(Convert.ToDouble(rowcnt) * Fper);
+                sql = sql + " update top (" + cnt20 + ") MsgSchedule set blockfail=1 where profileid='" + UserID + "' and schedule=dateadd(minute, " + Convert.ToString(Math.Abs(timedifferenceInMinute)) + ", '" + schdate + "') and isnull(blacklist,0)=0 AND isnull(BLOCKNO,0)=0 and fileid=@id and Tomobile not in (" + getWhiteListNo(UserID) + ") ";
+            }
+            bool ClkBlk = ClickListUser(UserID);
+            string isdlr = "";
+            if ((ClkBlk && SMSType == "2") || (ClkBlk && (SMSType == "3" || SMSType == "6") && shortURLId > 0))
+            {
+                DataTable dtCl = database.GetDataTable("Select * from ClickDataBlock where userid='" + UserID + "'");
+                string noofdays = dtCl.Rows[0]["noofdays"].ToString();
+                isdlr = dtCl.Rows[0]["ProcessType"].ToString();
+                sql = sql + " select t.* into #t12 from MsgSchedule t inner join MobTrackURL m on m.urlid='" + shortURLId.ToString() + "' and t.TOMOBILE=m.mobile inner join (select distinct urlid from mobstats where shorturl_id='" + shortURLId.ToString() + "') s on m.id=s.urlid where t.profileid='" + UserID + "' and t.schedule=dateadd(minute, " + Convert.ToString(Math.Abs(timedifferenceInMinute)) + ", '" + schdate + "') and m.sentdate >= DateAdd(Day,-" + noofdays + ",getdate()) ";
+
+                if (isdlr.ToUpper() == "DELIVERED")
+                {
+                    sql = sql + " update MsgSchedule set blockno=1 where profileid='" + UserID + "' and schedule=dateadd(minute, " + Convert.ToString(Math.Abs(timedifferenceInMinute)) + ", '" + schdate + "') and tomobile in (select tomobile from #t12) ";
+                }
+                if (isdlr.ToUpper() == "NOSUBMISSION")
+                {
+                    sql = sql + " delete d from MsgSchedule d inner join #t12 t on d.tomobile = t.tomobile  where d.profileid='" + UserID + "' and d.schedule=dateadd(minute, " + Convert.ToString(Math.Abs(timedifferenceInMinute)) + ", '" + schdate + "') ;  ";
+                }
+            }
+            if (SMSType == "2" || ((SMSType == "3" || SMSType == "6") && shortURLId > 0))
+            {
+                sql = sql + "; Update MsgSchedule set MSGTEXT=replace(MSGTEXT,shorturl,domain+newsegment) where PROFILEID='" + UserID + "' and SCHEDULE=dateadd(minute, " + Convert.ToString(Math.Abs(timedifferenceInMinute)) + ", '" + schdate + "') ; ";
+            }
+
+            bool isMobProcess = MobProcessUser(UserID);
+            if (isMobProcess)
+            {
+                //PROCESS 
+                sql = sql + "Update Msgschedule set blockno=1 from msgschedule m inner join BLOCKSMSERROR s with (nolock) on s.profileid=m.profileid inner join UserMobile b with (nolock) on m.tomobile=b.tomobile and m.profileid=b.profileid AND B.ERR_CODE=S.ERR_CODE where m.profileid='" + UserID + "' and m.schedule=dateadd(minute, " + Convert.ToString(Math.Abs(timedifferenceInMinute)) + ", '" + schdate + "') and s.DORF='D' ; ";
+                sql = sql + "Update Msgschedule set blockfail=1,ERR_CODE=S.ERR_CODE from msgschedule m inner join BLOCKSMSERROR s with (nolock) on s.profileid=m.profileid inner join UserMobile b with (nolock) on m.tomobile=b.tomobile and m.profileid=b.profileid AND B.ERR_CODE=S.ERR_CODE where m.profileid='" + UserID + "' and m.schedule=dateadd(minute, " + Convert.ToString(Math.Abs(timedifferenceInMinute)) + ", '" + schdate + "') and s.DORF='F' ; ";
+            }
+
+            // double bal = CalculateAmount(UserID, noof_message, Convert.ToDouble(rate), smscount);
+            double bal = CalculateSMSCost(noof_message, Convert.ToDouble(rate));
+            sql = sql + " update customer set balance = balance - '" + bal + "' where username = '" + UserID + "'";
+
+            try
+            {
+                database.ExecuteNonQuery(sql);
+            }
+            catch (Exception ex)
+            {
+                LogError("Error in Schedule_SMS_BULK method !  ", ex.Message + " - " + ex.StackTrace);
+                throw ex;
+            }
+        }
+
+        public void B4SEND_InsertTemplateSMSrecordsFromUSERTMP(string userId, string s, string SMSType, string msg, string filenm, string filenmext, DataTable dtAc, DataTable dtCols, ListBox lstMappedFields, string campnm, bool ucs2, double rate, int noofsms, string schdate, List<string> tempFields, string TemplateID, string country_code, string shUrl = "", string domName = "", int shortURLId = 0, double PrevBalance = 0, double AvailableBalance = 0, string tmpfilenm = "")
+        {
+            string user1 = "tmp1_" + userId;
+            string user = "tmp_" + userId;
+            string colnm = "";
+            string sql = "";
+            string peid = getPEid(userId);
+
+            string dataCode = "";
+            if (SMSType == "8")
+            {
+                if (ucs2)
+                    dataCode = "UnicodeFlashSMS";
+                else
+                    dataCode = "DefaultFlashSMS";
+            }
+            else
+            {
+                if (ucs2)
+                    dataCode = "UCS2";
+                else
+                    dataCode = "Default";
+            }
+
+            sql = @"if exists (select * from sys.tables where name='" + user + @"') drop table " + user + @" ;
+                SELECT * INTO " + user + @" FROM " + user1;
+            database.ExecuteNonQuery(sql);
+            colnm = Convert.ToString(database.GetScalarValue("select column_name From information_schema.columns where table_name = '" + user1 + @"' and ordinal_position = 1 "));
+            database.ExecuteNonQuery("update " + user + @" set [" + colnm + "] = '" + country_code + "'+convert(varchar,convert(bigint,[" + colnm + "])) ");
+
+            checkNumberDigitsAndUpdate(user, colnm);
+
+            sql = GetSqlAccounts(dtAc);
+            DataTable dt = database.GetDataTable(sql);
+
+            Int32 rowcnt = Convert.ToInt32(database.GetScalarValue("if exists (select * from sys.tables where name='" + user + @"') select count(*) from " + user + @" else select 0 "));
+
+            dt.Columns.Add("cnt", typeof(string));
+
+            int totalPDU = 0;
+            for (int i = 0; i < dt.Rows.Count; i++) totalPDU += Convert.ToInt16(dt.Rows[i]["PDUSIZE"]);
+            Int32 totcnt = 0;
+            for (int i = 0; i < dt.Rows.Count; i++)
+            {
+                double per = (Convert.ToDouble(dt.Rows[i]["PDUSIZE"]) * 100) / Convert.ToDouble(totalPDU);
+                Int32 cntrow = Convert.ToInt32(rowcnt * (per / 100));
+                totcnt += cntrow;
+                dt.Rows[i]["cnt"] = cntrow.ToString();
+            }
+            int dif = 0;
+            if (totcnt < rowcnt)
+            {
+                dif = rowcnt - totcnt;
+                for (int i = 0; i < dt.Rows.Count; i++)
+                    dt.Rows[i]["cnt"] = Convert.ToString(Convert.ToInt32(dt.Rows[i]["cnt"]) + 1);
+            }
+            //Int32 cnt = (rowcnt / dt.Rows.Count);
+            //if (rowcnt % dt.Rows.Count > 0) cnt++;
+            database.ExecuteNonQuery("IF not EXISTS(SELECT 1 FROM sys.columns WHERE Name = N'SMPPACCOUNTID' AND Object_ID = Object_ID(N'" + user + "')) " +
+                " alter table " + user + @" add smppaccountid numeric(10) , shortsegment varchar(10) "); //add new column
+
+            for (int i = 0; i < dt.Rows.Count; i++)
+            {
+                sql = "update top (" + dt.Rows[i]["cnt"].ToString() + ") " + user + @" set smppaccountid = '" + dt.Rows[i]["smppaccountid"].ToString() + "' where smppaccountid is null ";
+                database.ExecuteNonQuery(sql);
+            }
+
+            if (shUrl != "") database.ExecuteNonQuery("update " + user + @" set shortsegment=left(NEWID(),8) ");
+
+            //prepare query with template msg text and field value
+            string m = msg.Replace("'", "''");
+            if (lstMappedFields.Items.Count > 0)
+            {
+                foreach (ListItem li in lstMappedFields.Items)
+                {
+                    string[] s1 = li.Text.Replace(" ---->> ", "$").Split('$');
+
+                    string coltype = Convert.ToString(database.GetScalarValue("SELECT DATA_TYPE FROM INFORMATION_SCHEMA.COLUMNS WHERE TABLE_NAME = '" + user + @"' and COLUMN_NAME = '" + s1[1] + "'"));
+                    if (coltype.ToUpper().Contains("DATE"))
+                        m = m.Replace(s1[0], "' + convert(varchar,[" + s1[1] + "],106) + N'");
+                    else if (coltype.ToUpper().Contains("FLOAT"))
+                        m = m.Replace(s1[0], "' + CONVERT(nvarchar(255), LTRIM(RTRIM(str(ISNULL([" + s1[1] + "], 0), 20, 0)))) + N'");
+                    else
+                        m = m.Replace(s1[0], "' + convert(nvarchar(max),[" + s1[1] + "]) + N'");
+                    //m = m.Replace(s1[0], "' + [" + s1[1] + "] + N'");
+                }
+            }
+            for (int j = 0; j < tempFields.Count; j++)
+                m = m.Replace(tempFields[j], ""); filenm = filenm.Replace("'", "''");
+
+            double CampaignCost = PrevBalance - AvailableBalance;
+
+            if (schdate == "")
+            {
+                //2 feb change ccode
+                sql = @"if exists (select * from sys.tables where name='" + user + @"')  " +
+                    " begin " +
+                    " Insert into SMSFILEUPLOAD (USERID,FILENM,EXTENSION,RECCOUNT,senderid,campaignname,TEMPLATEID,smsrate,shortURLId,PrevBalance,CampaignCost,AvailableBalance,tmpFN,COUNTRYCODE) values ('" + userId + "','" + filenm + "','" + filenmext + "','" + rowcnt.ToString() + "','" + s + "','" + campnm + "','" + TemplateID + "','" + rate + "','" + Convert.ToString(shortURLId) + "','" + PrevBalance + "','" + CampaignCost + "','" + AvailableBalance + "','" + tmpfilenm + "','" + country_code + "') " +
+                    " declare @id numeric(10) select @id = max(id) from SMSFILEUPLOAD where userid='" + userId + "' ; ";
+
+                //call sms test function test - get true / false
+                if (Helper.Global.Istemplatetest == false)
+                {
+                    sql = sql + " select t.* into #t_012 from " + user + " t " +
+                       " delete d from " + user + " d inner join #t_012 t on d.[" + colnm + "] = t.[" + colnm + "]  ;  " +
+                       " alter table #t_012 add msgid varchar (100) ;  ";
+
+                    for (int x = 0; x < noofsms; x++)
+                    {
+                        string smsTex = GetSMSText(msg, x + 1, noofsms, ucs2);
+                        sql = sql + " update #t_012 set msgid=newid() " +
+                            " Insert into msgsubmitted (ID,PROVIDER,SMPPACCOUNTID,PROFILEID,MSGTEXT,TOMOBILE,SENDERID,CREATEDAT,SENTDATETIME,MSGID,INSERTDATE,FILEID,NSEND,smstext,smsrate) " +
+                            " select @id as id,'vcon',smppaccountid,'" + userId + "'," +
+                            (shUrl != "" ? " REPLACE(N'" + m + "','" + shUrl + "','" + domName + "' + shortsegment collate SQL_Latin1_General_CP1_CI_AS) " : "N'" + m + "'") + " as msgtext,CONVERT(nvarchar(255),LTRIM(RTRIM(str(ISNULL([" + colnm + @"],0),20,0)))) as TOMOBILE,'" + s + "',GETDATE(),GETDATE(),msgid,getdate(),@id as fileid,'1'," +
+                            (shUrl != "" ? " REPLACE(N'" + m + "','" + shUrl + "','" + domName + "' + shortsegment collate SQL_Latin1_General_CP1_CI_AS) " : "N'" + m + "'") + ",'" + rate.ToString() + "' from #t_012 ; " +
+                        " Insert into delivery (DLVRTEXT,MSGID,DLVRTIME,DLVRSTATUS,err_code,INSERTDATE) " +
+                        @" select 'id:' + MSGID + ' sub:001 dlvrd:001 submit date:' + RIGHT(CONVERT(VARCHAR,getdate(),112),6) + REPLACE(CONVERT(VARCHAR,getdate(),108),':','') + 
+                    ' done date:' + RIGHT(CONVERT(VARCHAR, GETDATE(), 112), 6) + REPLACE(CONVERT(VARCHAR, GETDATE(), 108), ':', '') + ' stat:UNDELIV err:" + Helper.Global.templateErrorCode + @" text:' AS DLVRTEXT, MSGID, GETDATE(), 'Undeliverable','" + Helper.Global.templateErrorCode + @"',getdate()
+                     FROM #t_012 ";
+                    }
+                    if (shUrl != "")
+                    {
+                        sql = sql + " insert into mobtrackurl (urlid, mobile, sentdate, segment,fileid,templateid) select " +
+                           "'" + shortURLId.ToString() + "', [" + colnm + "] , getdate(),shortsegment,@id as fileid,'" + TemplateID + "' as templateid  from " + user + " where [" + colnm + "] is not null ; ";
+                    }
+                    sql = sql + " end ";
+                }
+                else
+                {
+                    double Bper = GetBlockSMSper(userId, "B");
+                    if (Bper != 0)
+                    {
+                        Int32 cnt20 = Convert.ToInt32(Convert.ToDouble(rowcnt) * Bper);
+                        sql = sql + " select top " + cnt20 + " * into #t10 from " + user + " where [" + colnm + "] is not null and [" + colnm + "] not in (" + getWhiteListNo(userId) + ") ORDER BY NEWID() " +
+                            " delete d from " + user + " d inner join #t10 t on d.[" + colnm + "] = t.[" + colnm + "]  ;  " +
+                            " alter table #t10 add msgid varchar (100) ;  ";
+
+                        for (int x = 0; x < noofsms; x++)
+                        {
+                            //string smsTex = GetSMSText(msg, x + 1, noofsms, ucs2);
+                            sql = sql + " update #t10 set msgid=newid() " +
+                            @" insert into notsubmitted (ID,PROVIDER,SMPPACCOUNTID,PROFILEID,MSGTEXT,TOMOBILE,SENDERID,CREATEDAT,SENTDATETIME,MSGID,INSERTDATE,FILEID,NSEND,smsrate)
+                        select @id as id,'vcon',smppaccountid,'" + userId + "'," +
+                            (shUrl != "" ? " REPLACE(N'" + m + "','" + shUrl + "','" + domName + "' + shortsegment collate SQL_Latin1_General_CP1_CI_AS) " : "N'" + m + "'") + " ,[" + colnm + "] as TOMOBILE,'" + s + "',GETDATE(),GETDATE(),msgid,getdate(),@id as fileid,'1','" + rate.ToString() + "' from #t10 ; " +
+                            " Insert into msgsubmitted (ID,PROVIDER,SMPPACCOUNTID,PROFILEID,MSGTEXT,TOMOBILE,SENDERID,CREATEDAT,SENTDATETIME,MSGID,INSERTDATE,FILEID,NSEND,smstext,smsrate) " +
+                            " select @id as id,'vcon',smppaccountid,'" + userId + "'," + (shUrl != "" ? " REPLACE(N'" + m + "','" + shUrl + "','" + domName + "' + shortsegment collate SQL_Latin1_General_CP1_CI_AS) " : "N'" + m + "'") + ",[" + colnm + "] as TOMOBILE,'" + s + "',GETDATE(),GETDATE(),msgid,getdate(),@id as fileid,'1'," +
+                            (shUrl != "" ? " REPLACE(N'" + m + "','" + shUrl + "','" + domName + "' + shortsegment collate SQL_Latin1_General_CP1_CI_AS) " : "N'" + m + "'") + ",'" + rate.ToString() + "' from #t10 ; ";
+                        }
+                    }
+                    double Fper = GetBlockSMSper(userId, "F");
+                    if (Fper != 0)
+                    {
+                        Int32 cnt20 = Convert.ToInt32(Convert.ToDouble(rowcnt) * Fper);
+                        sql = sql + " select top " + cnt20 + " * into #t101 from " + user + " where [" + colnm + "] is not null and [" + colnm + "] not in (" + getWhiteListNo(userId) + ") ORDER BY NEWID() " +
+                            " delete d from " + user + " d inner join #t101 t on d.[" + colnm + "] = t.[" + colnm + "]  ;  " +
+                            " alter table #t101 add msgid varchar (100) ;  ";
+
+                        for (int x = 0; x < noofsms; x++)
+                        {
+                            //string smsTex = GetSMSText(msg, x + 1, noofsms, ucs2);
+                            sql = sql + " update #t101 set msgid=newid() " +
+                            @" insert into FAILsubmitted (ID,PROVIDER,SMPPACCOUNTID,PROFILEID,MSGTEXT,TOMOBILE,SENDERID,CREATEDAT,SENTDATETIME,MSGID,INSERTDATE,FILEID,NSEND,smsrate)
+                        select @id as id,'vcon',smppaccountid,'" + userId + "'," +
+                            (shUrl != "" ? " REPLACE(N'" + m + "','" + shUrl + "','" + domName + "' + shortsegment collate SQL_Latin1_General_CP1_CI_AS) " : "N'" + m + "'") + " ,[" + colnm + "] as TOMOBILE," +
+                            "'" + s + "',GETDATE(),GETDATE(),msgid,getdate(),@id as fileid,'1','" + rate.ToString() + "' from #t101 ; " +
+                            " Insert into msgsubmitted (ID,PROVIDER,SMPPACCOUNTID,PROFILEID,MSGTEXT,TOMOBILE,SENDERID,CREATEDAT,SENTDATETIME,MSGID,INSERTDATE,FILEID,NSEND,smstext,smsrate) " +
+                            " select @id as id,'vcon',smppaccountid,'" + userId + "'," + (shUrl != "" ? " REPLACE(N'" + m + "','" + shUrl + "','" + domName + "' + shortsegment collate SQL_Latin1_General_CP1_CI_AS) " : "N'" + m + "'") + ",[" + colnm + "] as TOMOBILE,'" + s + "',GETDATE(),GETDATE(),msgid,getdate(),@id as fileid,'1'," +
+                            (shUrl != "" ? " REPLACE(N'" + m + "','" + shUrl + "','" + domName + "' + shortsegment collate SQL_Latin1_General_CP1_CI_AS) " : "N'" + m + "'") + ",'" + rate.ToString() + "' from #t101 ; ";
+                        }
+                    }
+                    bool blu = blacklistuser(userId);
+                    if (blu)
+                    {
+                        sql = sql + " select t.* into #t11 from " + user + " t left join BLACKLISTNO b on t.[" + colnm + "]=b.MOBILENO and b.userid='" + userId + "'  where b.MOBILENO is not null and t.[" + colnm + "] is not null " +
+                            " delete d from " + user + " d inner join #t11 t on d.[" + colnm + "] = t.[" + colnm + "]  ;  " +
+                            " alter table #t11 add msgid varchar (100) ; ";
+                        for (int x = 0; x < noofsms; x++)
+                        {
+                            //string smsTex = GetSMSText(msg, x + 1, noofsms, ucs2);
+                            sql = sql + " update #t11 set msgid=newid() " +
+                            " Insert into msgsubmitted (ID,PROVIDER,SMPPACCOUNTID,PROFILEID,MSGTEXT,TOMOBILE,SENDERID,CREATEDAT,SENTDATETIME,MSGID,INSERTDATE,FILEID,NSEND,smstext,smsrate) " +
+                            " select @id as id,'vcon',smppaccountid,'" + userId + "'," +
+                            (shUrl != "" ? " REPLACE(N'" + m + "','" + shUrl + "','" + domName + "' + shortsegment collate SQL_Latin1_General_CP1_CI_AS) " : "N'" + m + "'") + " as msgtext,CONVERT(nvarchar(255),LTRIM(RTRIM(str(ISNULL([" + colnm + @"],0),20,0)))) as TOMOBILE,'" + s + "',GETDATE(),GETDATE(),msgid,getdate(),@id as fileid,'1'," +
+                            (shUrl != "" ? " REPLACE(N'" + m + "','" + shUrl + "','" + domName + "' + shortsegment collate SQL_Latin1_General_CP1_CI_AS) " : "N'" + m + "'") + ",'" + rate.ToString() + "' from #t11 ; " +
+                            " Insert into delivery (DLVRTEXT,MSGID,DLVRTIME,DLVRSTATUS,err_code,INSERTDATE) " +
+                            @" select 'id:' + MSGID + ' sub:001 dlvrd:001 submit date:' + RIGHT(cONVERT(VARCHAR,getdate(),112),6) + REPLACE(cONVERT(VARCHAR,getdate(),108),':','') + 
+                    ' done date:' + RIGHT(cONVERT(VARCHAR, GETDATE(), 112), 6) + REPLACE(cONVERT(VARCHAR, GETDATE(), 108), ':', '') + ' stat:BlackList err:250 text:' AS DLVRTEXT, MSGID, GETDATE(), 'BlackList','250',getdate()
+                    FROM #t11 ; ";
+                        }
+                    }
+
+                    bool isMobProcess = MobProcessUser(userId);
+                    if (isMobProcess)
+                    {
+                        //PROCESS FAIL
+                        sql = sql + " select t.*,s.err_code into #mt11 from " + user + " t inner join BLOCKSMSERROR s with (nolock) on s.profileid='" + userId + "' inner join UserMobile b with (nolock) on t.[" + colnm + "]=b.TOMOBILE and b.Profileid=s.profileid and s.err_code=b.err_code where s.DORF='F' " +
+                            " delete d from " + user + " d inner join #mt11 t on d.[" + colnm + "] = t.[" + colnm + "]  ;  " +
+                            " alter table #mt11 add msgid varchar (100) ;  ";
+
+                        for (int x = 0; x < noofsms; x++)
+                        {
+                            string smsTex = GetSMSText(msg, x + 1, noofsms, ucs2);
+                            sql = sql + " update #mt11 set msgid=newid() " +
+                            " Insert into msgsubmitted (ID,PROVIDER,SMPPACCOUNTID,PROFILEID,MSGTEXT,TOMOBILE,SENDERID,CREATEDAT,SENTDATETIME,MSGID,INSERTDATE,FILEID,NSEND,smstext,smsrate) " +
+                            " select @id as id,'vcon',smppaccountid,'" + userId + "'," +
+                            (shUrl != "" ? " REPLACE(N'" + m + "','" + shUrl + "','" + domName + "' + shortsegment collate SQL_Latin1_General_CP1_CI_AS) " : "N'" + m + "'") + " as msgtext,CONVERT(nvarchar(255),LTRIM(RTRIM(str(ISNULL([" + colnm + @"],0),20,0)))) as TOMOBILE,'" + s + "',GETDATE(),GETDATE(),msgid,getdate(),@id as fileid,'1'," +
+                            (shUrl != "" ? " REPLACE(N'" + m + "','" + shUrl + "','" + domName + "' + shortsegment collate SQL_Latin1_General_CP1_CI_AS) " : "N'" + m + "'") + ",'" + rate.ToString() + "' from #mt11 ; " +
+                            " Insert into delivery (DLVRTEXT,MSGID,DLVRTIME,DLVRSTATUS,err_code,INSERTDATE) " +
+                            @" select 'id:' + MSGID + ' sub:001 dlvrd:000 submit date:' + RIGHT(cONVERT(VARCHAR,getdate(),112),6) + REPLACE(cONVERT(VARCHAR,getdate(),108),':','') + 
+                            ' done date:' + RIGHT(cONVERT(VARCHAR, GETDATE(), 112), 6) + REPLACE(cONVERT(VARCHAR, GETDATE(), 108), ':', '') + ' stat:UNDELIV err:' + convert(varchar,err_code COLLATE SQL_Latin1_General_CP1_CI_AS) + ' text:' AS DLVRTEXT, MSGID, GETDATE(), 'Undeliverable',err_code,getdate()
+                            FROM #mt11 ; ";
+                        }
+
+                        //PROCESS DELIVERY
+                        sql = sql + " select t.* into #Dmt11 from " + user + " t inner join BLOCKSMSERROR s with (nolock) on s.profileid='" + userId + "' inner join UserMobile b with (nolock) on t.[" + colnm + "]=b.TOMOBILE and b.Profileid=s.profileid and s.err_code=b.err_code where s.DORF='D' " +
+                            " delete d from " + user + " d inner join #Dmt11 t on d.[" + colnm + "] = t.[" + colnm + "]  ;  " +
+                            " alter table #Dmt11 add msgid varchar (100) ;  ";
+
+                        for (int x = 0; x < noofsms; x++)
+                        {
+                            string smsTex = GetSMSText(msg, x + 1, noofsms, ucs2);
+                            sql = sql + " update #Dmt11 set msgid=newid() " +
+                            " Insert into msgsubmitted (ID,PROVIDER,SMPPACCOUNTID,PROFILEID,MSGTEXT,TOMOBILE,SENDERID,CREATEDAT,SENTDATETIME,MSGID,INSERTDATE,FILEID,NSEND,smstext,smsrate) " +
+                            " select @id as id,'vcon',smppaccountid,'" + userId + "'," +
+                            (shUrl != "" ? " REPLACE(N'" + m + "','" + shUrl + "','" + domName + "' + shortsegment collate SQL_Latin1_General_CP1_CI_AS) " : "N'" + m + "'") + " as msgtext,CONVERT(nvarchar(255),LTRIM(RTRIM(str(ISNULL([" + colnm + @"],0),20,0)))) as TOMOBILE,'" + s + "',GETDATE(),GETDATE(),msgid,getdate(),@id as fileid,'1'," +
+                            (shUrl != "" ? " REPLACE(N'" + m + "','" + shUrl + "','" + domName + "' + shortsegment collate SQL_Latin1_General_CP1_CI_AS) " : "N'" + m + "'") + ",'" + rate.ToString() + "' from #Dmt11 ; " +
+                            " Insert into delivery (DLVRTEXT,MSGID,DLVRTIME,DLVRSTATUS,err_code,INSERTDATE) " +
+                            @" select 'id:' + MSGID + ' sub:001 dlvrd:001 submit date:' + RIGHT(cONVERT(VARCHAR,getdate(),112),6) + REPLACE(cONVERT(VARCHAR,getdate(),108),':','') + 
+                            ' done date:' + RIGHT(cONVERT(VARCHAR, GETDATE(), 112), 6) + REPLACE(cONVERT(VARCHAR, GETDATE(), 108), ':', '') + ' stat:DELIVRD err:000 text:' AS DLVRTEXT, MSGID, GETDATE(), 'Delivered','000',getdate()
+                            FROM #Dmt11 ; ";
+                        }
+                    }
+
+
+                    sql = sql + " INSERT INTO MSGTRAN (PROVIDER,SMPPACCOUNTID,PROFILEID,MSGTEXT,TOMOBILE,SENDERID,CREATEDAT,FILEID,peid,DATACODE,smsrate,templateid)  " +
+                        " Select 'VCON' as PROVIDER, smppaccountid, '" + userId + @"' as PROFILEID, " +
+                        (shUrl != "" ? " REPLACE(N'" + m + "', '" + shUrl + "', '" + domName + "' + shortsegment collate SQL_Latin1_General_CP1_CI_AS) " : "N'" + m + "'") + " as MSGTEXT, CONVERT(nvarchar(255),LTRIM(RTRIM(str(ISNULL([" + colnm + @"],0),20,0)))) as TOMOBILE
+                , '" + s + @"' as SENDERID, GETDATE() as CREATEDAT,@id as fileid,'" + peid + "' as peid,'" + dataCode + "' AS DATACODE,'" + rate.ToString() + "' as smsrate,'" + TemplateID + "' AS templateid from " + user + " where [" + colnm + "] is not null ; ";
+
+
+                    if (Bper != 0 && shUrl != "")
+                    {
+                        sql = sql + " insert into mobtrackurl (urlid, mobile, sentdate, segment,fileid,templateid) select " +
+                       "'" + shortURLId.ToString() + "', [" + colnm + "] , getdate(),shortsegment,@id as fileid,'" + TemplateID + "' as templateid  from #t10 where [" + colnm + "] is not null ; ";
+                    }
+                    if (Fper != 0 && shUrl != "")
+                    {
+                        sql = sql + " insert into mobtrackurl (urlid, mobile, sentdate, segment,fileid,templateid) select " +
+                       "'" + shortURLId.ToString() + "', [" + colnm + "] , getdate(),shortsegment,@id as fileid,'" + TemplateID + "' as templateid  from #t101 where [" + colnm + "] is not null ; ";
+                    }
+                    if (blu && shUrl != "")
+                    {
+                        sql = sql + " insert into mobtrackurl (urlid, mobile, sentdate, segment,fileid,templateid) select " +
+                       "'" + shortURLId.ToString() + "', [" + colnm + "] , getdate(),shortsegment,@id as fileid,'" + TemplateID + "' as templateid  from #t11 where [" + colnm + "] is not null ; ";
+                    }
+                    if (shUrl != "")
+                    {
+                        sql = sql + " insert into mobtrackurl (urlid, mobile, sentdate, segment,fileid,templateid) select " +
+                           "'" + shortURLId.ToString() + "', [" + colnm + "] , getdate(),shortsegment,@id as fileid,'" + TemplateID + "' as templateid  from " + user + " where [" + colnm + "] is not null ; ";
+                    }
+                    sql = sql + " end ";
+
+                    //  double bal = CalculateAmount(userId, noof_message, Convert.ToDouble(rate), smscount);
+                    double bal = CalculateSMSCost(noof_message, Convert.ToDouble(rate));
+                    sql = sql + " update customer set balance = balance - '" + bal + "' where username = '" + userId + "'";
+                }
+
+
+            }
+            else
+            {
+                string q1 = "select defaultCountry from CUSTOMER with(nolock) where username='" + userId + "' ";
+                int timedifferenceInMinute = Convert.ToInt32(database.GetScalarValue("select timedifferenceInMinute from tblCountry where counryCode in(" + q1 + ")"));
+
+                // int shortURLId = 0;
+                string shortURL = ""; string domain = "";
+                shortURL = shUrl; domain = domName;
+                sql = @"Insert into SMSFILEUPLOAD (USERID,FILENM,EXTENSION,RECCOUNT,senderid,schedule,campaignname,TEMPLATEID,smsrate,shortURLId,PrevBalance,CampaignCost,AvailableBalance,tmpFN,COUNTRYCODE) values ('" + userId + "','" + filenm + "','" + filenmext + "','" + rowcnt.ToString() + "','" + s + "','" + schdate + "','" + campnm + "','" + TemplateID + "','" + rate + "','" + Convert.ToString(shortURLId) + "','" + PrevBalance + "','" + CampaignCost + "','" + AvailableBalance + "','" + tmpfilenm + "','" + country_code + "') " +
+                " declare @id numeric(10) select @id = max(id) from SMSFILEUPLOAD where userid='" + userId + "' ; " +
+                " INSERT INTO MsgSchedule (PROVIDER,SMPPACCOUNTID,PROFILEID,MSGTEXT,TOMOBILE,SENDERID,CREATEDAT,SCHEDULE,MOBTRK,SHORTURL,URLID,NEWSEGMENT,SMSRATE,SMSTYPE,DOMAIN,FILEID,peid,DATACODE,blacklist,templateid) " +
+                " select 'VCON',u.smppaccountid,'" + userId + "',N'" + m + "',CONVERT(nvarchar(255),LTRIM(RTRIM(str(ISNULL(u.[" + colnm + @"],0),20,0)))) as TOMOBILE,'" + s + "',GETDATE(),dateadd(minute, " + Convert.ToString(Math.Abs(timedifferenceInMinute)) + ", '" + schdate + "'),'" +
+                (shortURLId > 0 ? "Y" : "N") + "','" + shortURL + "','" + shortURLId.ToString() + "'," + (shortURLId > 0 ? "left(NEWID(),8)" : "null") + ",'" + rate.ToString() + "','" + SMSType + "','" +
+                domain + "',@id,'" + peid + "','" + dataCode + "',case when b.mobileno is not null then 1 else 0 end as blacklist,'" + TemplateID + "' AS templateid from " + user + " u left join blacklistno b on u.[" + colnm + "]=b.mobileno and b.userid='" + userId + "' where u.[" + colnm + "] is not null ; ";
+
+                double Bper = GetBlockSMSper(userId, "B");
+                if (Bper != 0)
+                {
+                    Int32 cnt20 = Convert.ToInt32(Convert.ToDouble(rowcnt) * Bper);
+                    sql = sql + " update top (" + cnt20 + ") MsgSchedule set blockno=1 where profileid='" + userId + "' and schedule=dateadd(minute, " + Convert.ToString(Math.Abs(timedifferenceInMinute)) + ", '" + schdate + "') and isnull(blacklist,0)=0 and fileid=@id and Tomobile not in (" + getWhiteListNo(userId) + ") ";
+                }
+                double Fper = GetBlockSMSper(userId, "F");
+                if (Fper != 0)
+                {
+                    Int32 cnt20 = Convert.ToInt32(Convert.ToDouble(rowcnt) * Fper);
+                    sql = sql + " update top (" + cnt20 + ") MsgSchedule set blockFAIL=1 where profileid='" + userId + "' and schedule=dateadd(minute, " + Convert.ToString(Math.Abs(timedifferenceInMinute)) + ", '" + schdate + "') and isnull(blacklist,0)=0 and isnull(blockno,0)=0 and fileid=@id and Tomobile not in (" + getWhiteListNo(userId) + ") ";
+                }
+                if ((SMSType == "2" || SMSType == "3" || SMSType == "6") && shortURLId > 0)
+                {
+                    sql = sql + "; Update MsgSchedule set MSGTEXT=replace(MSGTEXT,shorturl,domain+newsegment) where PROFILEID='" + userId + "' and SCHEDULE=dateadd(minute, " + Convert.ToString(Math.Abs(timedifferenceInMinute)) + ", '" + schdate + "') ; ";
+                }
+                bool isMobProcess = MobProcessUser(userId);
+                if (isMobProcess)
+                {
+                    //PROCESS 
+                    sql = sql + "Update Msgschedule set blockno=1 from msgschedule m inner join BLOCKSMSERROR s with (nolock) on s.profileid=m.profileid inner join UserMobile b with (nolock) on m.tomobile=b.tomobile and m.profileid=b.profileid AND B.ERR_CODE=S.ERR_CODE where m.profileid='" + userId + "' and m.schedule=dateadd(minute, " + Convert.ToString(Math.Abs(timedifferenceInMinute)) + ", '" + schdate + "') and s.DORF='D' ; ";
+                    sql = sql + "Update Msgschedule set blockfail=1,ERR_CODE=S.ERR_CODE from msgschedule m inner join BLOCKSMSERROR s with (nolock) on s.profileid=m.profileid inner join UserMobile b with (nolock) on m.tomobile=b.tomobile and m.profileid=b.profileid AND B.ERR_CODE=S.ERR_CODE where m.profileid='" + userId + "' and m.schedule=dateadd(minute, " + Convert.ToString(Math.Abs(timedifferenceInMinute)) + ", '" + schdate + "') and s.DORF='F' ; ";
+                }
+                // double bal = CalculateAmount(userId, noof_message, Convert.ToDouble(rate), smscount);
+                double bal = CalculateSMSCost(noof_message, Convert.ToDouble(rate));
+                sql = sql + " update customer set balance = balance - '" + bal + "' where username = '" + userId + "'";
+            }
+
+            try
+            {
+                database.ExecuteNonQuery(sql);
+            }
+            catch (Exception ex)
+            {
+                LogError("Error in InsertTemplateSMSrecordsFromUSERTMP method !  ", ex.Message + " - " + ex.StackTrace);
+                throw ex;
+            }
+        }
+
+        public void B4SEND_InsertSMSrecordsFromUSERTMP(string userId, string s, string SMSType, string msg, string filenm, string filenmext, DataTable dtAc, string campnm, bool ucs2, int noofsms, double Drate, List<string> mobList, string manual, string retarget, string TemplateID, string country_code, double PrevBalance = 0, double AvailableBalance = 0, string tmpfilenm = "")
+        {
+            //change SMPP ACCOUNT based on SMSTYPE
+            string user = "tmp_" + userId;
+            string sql;
+
+            string colnm = "";
+
+            if (manual == "MANUAL")
+            {
+                database.ExecuteNonQuery("if exists (select * from sys.tables where name='" + user + @"') drop table " + user + @"; Create table " + user + @" (MobileNo numeric) ;  ");
+                foreach (var m in mobList)
+                {
+                    database.ExecuteNonQuery(" Insert into " + user + @" values ('" + country_code + m + "')");
+                }
+                database.ExecuteNonQuery("delete d from " + user + @" d inner join globalBlackListNo b on b.mobile=d.MobileNo ");
+                /*rabi 14 jul 21*/
+                database.ExecuteNonQuery(" if exists(select * from smsrestrictmobile srm join [smsrestriction] sr on srm.smsrestrictionid=sr.id where userid='" + userId + "' AND TYPE='U') delete d from " + user + @" d inner join SMSRestrictmobile SRM on SRM.MobileNo='91'+d.MobileNo  join [SMSRestriction] SR on SRM.SMSRestrictioniD=SR.Id  WHERE UserId='" + userId + "' AND TYPE='U' if exists(select * from smsrestrictmobile srm join [smsrestriction] sr on srm.smsrestrictionid=sr.id where SenderId='" + s + "' AND TYPE='S') delete d from " + user + @" d inner join SMSRestrictmobile SRM on SRM.MobileNo='91'+d.MobileNo  join [SMSRestriction] SR on SRM.SMSRestrictioniD=SR.Id  WHERE SenderId='" + s + "' AND TYPE='S'");
+
+            }
+
+            colnm = Convert.ToString(database.GetScalarValue("if exists (select * from sys.tables where name='" + user + @"') select column_name From information_schema.columns where table_name = '" + user + @"' and ordinal_position = 1 else select '' "));
+            if (country_code != "" && manual != "MANUAL")
+                database.ExecuteNonQuery("if exists (select * from sys.tables where name='" + user + @"') update " + user + @" set [" + colnm + "] = '" + country_code + "'+convert(varchar,convert(bigint,[" + colnm + "])) ");
+
+            checkNumberDigitsAndUpdate(user, colnm);
+
+            string peid = getPEid(userId);
+
+            sql = GetSqlAccounts(dtAc);
+            DataTable dt = database.GetDataTable(sql);
+
+            Int32 rowcnt = Convert.ToInt32(database.GetScalarValue("if exists (select * from sys.tables where name='" + user + @"') select count(*) from " + user + @" else select 0 "));
+
+            dt.Columns.Add("cnt", typeof(string));
+
+            int totalPDU = 0;
+            for (int i = 0; i < dt.Rows.Count; i++) totalPDU += Convert.ToInt16(dt.Rows[i]["PDUSIZE"]);
+            Int32 totcnt = 0;
+            for (int i = 0; i < dt.Rows.Count; i++)
+            {
+                double per = (Convert.ToDouble(dt.Rows[i]["PDUSIZE"]) * 100) / Convert.ToDouble(totalPDU);
+                Int32 cntrow = Convert.ToInt32(rowcnt * (per / 100));
+                totcnt += cntrow;
+                dt.Rows[i]["cnt"] = cntrow.ToString();
+            }
+            int dif = 0;
+            if (totcnt < rowcnt)
+            {
+                dif = rowcnt - totcnt;
+                for (int i = 0; i < dt.Rows.Count; i++)
+                    dt.Rows[i]["cnt"] = Convert.ToString(Convert.ToInt32(dt.Rows[i]["cnt"]) + 1);
+            }
+            //Int32 cnt = (rowcnt / dt.Rows.Count);
+            //if (rowcnt % dt.Rows.Count > 0) cnt++;
+            database.ExecuteNonQuery("IF not EXISTS(SELECT 1 FROM sys.columns WHERE Name = N'SMPPACCOUNTID' AND Object_ID = Object_ID(N'" + user + "')) " +
+               " alter table " + user + @" add smppaccountid numeric(10)"); //add new column
+
+            //  database.ExecuteNonQuery("alter table " + user + @" add smppaccountid numeric(10) ");
+
+            for (int i = 0; i < dt.Rows.Count; i++)
+            {
+                sql = "update top (" + dt.Rows[i]["cnt"].ToString() + ") " + user + @" set smppaccountid = '" + dt.Rows[i]["smppaccountid"].ToString() + "' where smppaccountid is null ";
+                database.ExecuteNonQuery(sql);
+            }
+            msg = msg.Replace("'", "''"); filenm = filenm.Replace("'", "''");
+
+            double CampaignCost = PrevBalance - AvailableBalance;
+
+            sql = @"if exists (select * from sys.tables where name='" + user + @"')  " +
+                " begin " +
+                " Insert into SMSFILEUPLOAD (USERID,FILENM,EXTENSION,RECCOUNT,senderid,campaignname,smsrate,PrevBalance,CampaignCost,AvailableBalance,tmpFN,COUNTRYCODE) values ('" + userId + "','" + filenm + "','" + filenmext + "','" + rowcnt.ToString() + "','" + s + "','" + campnm + "','" + Drate + "','" + PrevBalance + "','" + CampaignCost + "','" + AvailableBalance + "','" + tmpfilenm + "','" + country_code + "') " +
+                " declare @id numeric(10) select @id = max(id) from SMSFILEUPLOAD where userid='" + userId + "' ; ";
+
+            string rate = Drate.ToString();
+
+            //call sms test function test - get true / false
+            if (Helper.Global.Istemplatetest == false)
+            {
+                sql = sql + " select t.* into #t_011 from " + user + " t " +
+                   " delete d from " + user + " d inner join #t_011 t on d.[" + colnm + "] = t.[" + colnm + "]  ;  " +
+                   " alter table #t_011 add msgid varchar (100) ;  ";
+
+                for (int x = 0; x < noofsms; x++)
+                {
+                    string smsTex = GetSMSText(msg, x + 1, noofsms, ucs2);
+                    sql = sql + " update #t_011 set msgid=newid() " +
+                    " Insert into msgsubmitted (ID,PROVIDER,SMPPACCOUNTID,PROFILEID,MSGTEXT,TOMOBILE,SENDERID,CREATEDAT,SENTDATETIME,MSGID,INSERTDATE,FILEID,NSEND,smstext,smsrate) " +
+                    " select @id as id,'vcon',smppaccountid,'" + userId + "',N'" + smsTex + "',[" + colnm + "] as TOMOBILE,'" + s + "',GETDATE(),GETDATE(),msgid,getdate(),@id as fileid,'1'," +
+                    " N'" + msg + "','" + rate + "' from #t_011 ; " +
+                    " Insert into delivery (DLVRTEXT,MSGID,DLVRTIME,DLVRSTATUS,err_code,INSERTDATE) " +
+                    @" select 'id:' + MSGID + ' sub:001 dlvrd:001 submit date:' + RIGHT(CONVERT(VARCHAR,getdate(),112),6) + REPLACE(CONVERT(VARCHAR,getdate(),108),':','') + 
+                    ' done date:' + RIGHT(CONVERT(VARCHAR, GETDATE(), 112), 6) + REPLACE(CONVERT(VARCHAR, GETDATE(), 108), ':', '') + ' stat:UNDELIV err:" + Helper.Global.templateErrorCode + @" text:' AS DLVRTEXT, MSGID, GETDATE(), 'Undeliverable','" + Helper.Global.templateErrorCode + @"',getdate()
+                    FROM #t_011 end ";
+                }
+            }
+            else
+            {
+
+                double Bper = GetBlockSMSper(userId, "B");
+                if (Bper != 0 && retarget == "")
+                {
+                    Int32 cnt20 = Convert.ToInt32(Convert.ToDouble(rowcnt) * Bper);
+                    sql = sql + " select top " + cnt20 + " * into #t101 from " + user + " where [" + colnm + "] is not null and [" + colnm + "] not in (" + getWhiteListNo(userId) + ") ORDER BY NEWID() " +
+                        " delete d from " + user + " d inner join #t101 t on d.[" + colnm + "] = t.[" + colnm + "]  ;  " +
+                        " alter table #t101 add msgid varchar (100) ; ";
+
+                    for (int x = 0; x < noofsms; x++)
+                    {
+                        string smsTex = GetSMSText(msg, x + 1, noofsms, ucs2);
+                        sql = sql + " update #t101 set msgid=newid() " +
+                            @" insert into notsubmitted (ID,PROVIDER,SMPPACCOUNTID,PROFILEID,MSGTEXT,TOMOBILE,SENDERID,CREATEDAT,SENTDATETIME,MSGID,INSERTDATE,FILEID,NSEND,smsrate)
+                      select @id as id,'vcon',smppaccountid,'" + userId + "',N'" + smsTex + "',[" + colnm + "] as TOMOBILE,'" + s + "'," +
+                          "GETDATE(),GETDATE(),msgid,getdate(),@id as fileid,'1','" + rate + "' from #t101 ; " +
+                             " Insert into msgsubmitted (ID,PROVIDER,SMPPACCOUNTID,PROFILEID,MSGTEXT,TOMOBILE,SENDERID,CREATEDAT,SENTDATETIME,MSGID,INSERTDATE,FILEID,NSEND,smstext,smsrate) " +
+                             " select @id as id,'vcon',smppaccountid,'" + userId + "',N'" + smsTex + "',[" + colnm + "] as TOMOBILE,'" + s + "',GETDATE(),GETDATE(),msgid,getdate(),@id as fileid,'1'," +
+                             " N'" + msg + "','" + rate + "' from #t101 ; ";
+                    }
+                }
+                double Fper = GetBlockSMSper(userId, "F");
+                if (Fper != 0 && retarget == "")
+                {
+                    Int32 cnt20 = Convert.ToInt32(Convert.ToDouble(rowcnt) * Fper);
+                    sql = sql + " select top " + cnt20 + " * into #t10 from " + user + " where [" + colnm + "] is not null and [" + colnm + "] not in (" + getWhiteListNo(userId) + ") ORDER BY NEWID() " +
+                        " delete d from " + user + " d inner join #t10 t on d.[" + colnm + "] = t.[" + colnm + "]  ;  " +
+                        " alter table #t10 add msgid varchar (100) ; ";
+
+                    for (int x = 0; x < noofsms; x++)
+                    {
+                        string smsTex = GetSMSText(msg, x + 1, noofsms, ucs2);
+                        sql = sql + " update #t10 set msgid=newid() " +
+                            @" insert into FAILsubmitted (ID,PROVIDER,SMPPACCOUNTID,PROFILEID,MSGTEXT,TOMOBILE,SENDERID,CREATEDAT,SENTDATETIME,MSGID,INSERTDATE,FILEID,NSEND,smsrate)
+                      select @id as id,'vcon',smppaccountid,'" + userId + "',N'" + smsTex + "',[" + colnm + "] as TOMOBILE,'" + s + "',GETDATE(),GETDATE(),msgid,getdate(),@id as fileid,'1','" + rate + "' from #t10 ; " +
+                             " Insert into msgsubmitted (ID,PROVIDER,SMPPACCOUNTID,PROFILEID,MSGTEXT,TOMOBILE,SENDERID,CREATEDAT,SENTDATETIME,MSGID,INSERTDATE,FILEID,NSEND,smstext,smsrate) " +
+                             " select @id as id,'vcon',smppaccountid,'" + userId + "',N'" + smsTex + "',[" + colnm + "] as TOMOBILE,'" + s + "',GETDATE(),GETDATE(),msgid,getdate(),@id as fileid,'1'," +
+                             " N'" + msg + "','" + rate + "' from #t10 ; ";
+                    }
+                }
+                if (blacklistuser(userId))
+                {
+                    sql = sql + " select t.* into #t11 from " + user + " t left join BLACKLISTNO b on t.[" + colnm + "]=b.MOBILENO and b.userid='" + userId + "' where b.MOBILENO is not null " +
+                        " delete d from " + user + " d inner join #t11 t on d.[" + colnm + "] = t.[" + colnm + "]  ;  " +
+                        " alter table #t11 add msgid varchar (100) ; ";
+                    for (int x = 0; x < noofsms; x++)
+                    {
+                        string smsTex = GetSMSText(msg, x + 1, noofsms, ucs2);
+                        sql = sql + " update #t11 set msgid=newid() " +
+                        " Insert into msgsubmitted (ID,PROVIDER,SMPPACCOUNTID,PROFILEID,MSGTEXT,TOMOBILE,SENDERID,CREATEDAT,SENTDATETIME,MSGID,INSERTDATE,FILEID,NSEND,smstext,smsrate) " +
+                        " select @id as id,'vcon',smppaccountid,'" + userId + "',N'" + smsTex + "',[" + colnm + "] as TOMOBILE,'" + s + "',GETDATE(),GETDATE(),msgid,getdate(),@id as fileid,'1'," +
+                        " N'" + msg + "','" + rate + "' from #t11 ; " +
+                        " Insert into delivery (DLVRTEXT,MSGID,DLVRTIME,DLVRSTATUS,err_code,INSERTDATE) " +
+                        @" select 'id:' + MSGID + ' sub:001 dlvrd:001 submit date:' + RIGHT(cONVERT(VARCHAR,getdate(),112),6) + REPLACE(cONVERT(VARCHAR,getdate(),108),':','') + 
+                    ' done date:' + RIGHT(cONVERT(VARCHAR, GETDATE(), 112), 6) + REPLACE(cONVERT(VARCHAR, GETDATE(), 108), ':', '') + ' stat:BlackList err:250 text:' AS DLVRTEXT, MSGID, GETDATE(), 'BlackList','250',getdate()
+                    FROM #t11 ; ";
+                    }
+                }
+
+                bool isMobProcess = MobProcessUser(userId);
+                if (isMobProcess)
+                {
+                    //PROCESS FAIL
+                    sql = sql + " select t.*,s.err_code into #mt11 from " + user + " t inner join BLOCKSMSERROR s with (nolock) on s.profileid='" + userId + "' inner join UserMobile b with (nolock) on t.[" + colnm + "]=b.TOMOBILE and b.Profileid=s.profileid and s.err_code=b.err_code where s.DORF='F' " +
+                        " delete d from " + user + " d inner join #mt11 t on d.[" + colnm + "] = t.[" + colnm + "]  ;  " +
+                        " alter table #mt11 add msgid varchar (100) ;  ";
+
+                    for (int x = 0; x < noofsms; x++)
+                    {
+                        string smsTex = GetSMSText(msg, x + 1, noofsms, ucs2);
+                        sql = sql + " update #mt11 set msgid=newid() " +
+                        " Insert into msgsubmitted (ID,PROVIDER,SMPPACCOUNTID,PROFILEID,MSGTEXT,TOMOBILE,SENDERID,CREATEDAT,SENTDATETIME,MSGID,INSERTDATE,FILEID,NSEND,smstext,smsrate) " +
+                        " select @id as id,'vcon',smppaccountid,'" + userId + "',N'" + smsTex + "',[" + colnm + "] as TOMOBILE,'" + s + "',GETDATE(),GETDATE(),msgid,getdate(),@id as fileid,'1'," +
+                        " N'" + msg + "','" + rate + "' from #mt11 ; " +
+                        " Insert into delivery (DLVRTEXT,MSGID,DLVRTIME,DLVRSTATUS,err_code,INSERTDATE) " +
+                        @" select 'id:' + MSGID + ' sub:001 dlvrd:000 submit date:' + RIGHT(cONVERT(VARCHAR,getdate(),112),6) + REPLACE(cONVERT(VARCHAR,getdate(),108),':','') + 
+                    ' done date:' + RIGHT(cONVERT(VARCHAR, GETDATE(), 112), 6) + REPLACE(cONVERT(VARCHAR, GETDATE(), 108), ':', '') + ' stat:UNDELIV err:' + convert(varchar,err_code COLLATE SQL_Latin1_General_CP1_CI_AS) + ' text:' AS DLVRTEXT, MSGID, GETDATE(), 'Undeliverable',err_code,getdate()
+                    FROM #mt11 ; ";
+                    }
+
+                    //PROCESS DELIVERY
+                    sql = sql + " select t.* into #Dmt11 from " + user + " t inner join BLOCKSMSERROR s with (nolock) on s.profileid='" + userId + "' inner join UserMobile b with (nolock) on t.[" + colnm + "]=b.TOMOBILE and b.Profileid=s.profileid and s.err_code=b.err_code where s.DORF='D' " +
+                        " delete d from " + user + " d inner join #Dmt11 t on d.[" + colnm + "] = t.[" + colnm + "]  ;  " +
+                        " alter table #Dmt11 add msgid varchar (100) ;  ";
+
+                    for (int x = 0; x < noofsms; x++)
+                    {
+                        string smsTex = GetSMSText(msg, x + 1, noofsms, ucs2);
+                        sql = sql + " update #Dmt11 set msgid=newid() " +
+                        " Insert into msgsubmitted (ID,PROVIDER,SMPPACCOUNTID,PROFILEID,MSGTEXT,TOMOBILE,SENDERID,CREATEDAT,SENTDATETIME,MSGID,INSERTDATE,FILEID,NSEND,smstext,smsrate) " +
+                        " select @id as id,'vcon',smppaccountid,'" + userId + "',N'" + smsTex + "',[" + colnm + "] as TOMOBILE,'" + s + "',GETDATE(),GETDATE(),msgid,getdate(),@id as fileid,'1'," +
+                        " N'" + msg + "','" + rate + "' from #Dmt11 ; " +
+                        " Insert into delivery (DLVRTEXT,MSGID,DLVRTIME,DLVRSTATUS,err_code,INSERTDATE) " +
+                        @" select 'id:' + MSGID + ' sub:001 dlvrd:001 submit date:' + RIGHT(cONVERT(VARCHAR,getdate(),112),6) + REPLACE(cONVERT(VARCHAR,getdate(),108),':','') + 
+                    ' done date:' + RIGHT(cONVERT(VARCHAR, GETDATE(), 112), 6) + REPLACE(cONVERT(VARCHAR, GETDATE(), 108), ':', '') + ' stat:DELIVRD err:000 text:' AS DLVRTEXT, MSGID, GETDATE(), 'Delivered','000',getdate()
+                    FROM #Dmt11 ; ";
+                    }
+                }
+                string dataCode = "";
+                if (SMSType == "8")
+                {
+                    if (ucs2)
+                        dataCode = "UnicodeFlashSMS";
+                    else
+                        dataCode = "DefaultFlashSMS";
+                }
+                else
+                {
+                    if (ucs2)
+                        dataCode = "UCS2";
+                    else
+                        dataCode = "Default";
+                }
+
+                sql = sql + " INSERT INTO MSGTRAN (PROVIDER,SMPPACCOUNTID,PROFILEID,MSGTEXT,TOMOBILE,SENDERID,CREATEDAT,FILEID,peid,DATACODE,smsrate,Templateid)  " +
+                    " Select 'VCON' as PROVIDER, smppaccountid, '" + userId + @"' as PROFILEID, N'" + msg + @"' as MSGTEXT, [" + colnm + @"] as TOMOBILE
+                , '" + s + @"' as SENDERID, GETDATE() as CREATEDAT,@id as fileid,'" + peid + "' as peid,'" + dataCode + "' AS DATACODE,'" + rate.ToString() + "' as smsrate,'" + TemplateID + "' as templateid from " + user + " where [" + colnm + "] is not null ; " +
+                    " end ";
+
+                //  double bal = CalculateAmount(userId, noof_message, Convert.ToDouble(rate), smscount);
+                double bal = CalculateSMSCost(noof_message, Convert.ToDouble(rate));
+                sql = sql + " update customer set balance = balance - '" + bal + "' where username = '" + userId + "'";
+            }
+
+            try
+            {
+                database.ExecuteNonQuery(sql);
+            }
+            catch (Exception ex)
+            {
+                LogError("Error in InsertSMSrecordsFromUSERTMP method !  ", ex.Message + " - " + ex.StackTrace);
+                throw ex;
+            }
+        }
+
+        public void B4SEND_Insert_SMS_BULK_4url(string UserID, string msg, string s, string schdate, int shortURLId, string shortURL, string domain, double rate, string SMSType, string filenm, string filenmext, DataTable dtAc, string campnm, bool ucs2, int noofsms, List<string> mobList, string manual, string retarget, string TemplateID, string country_code, double PrevBalance = 0, double AvailableBalance = 0, string tmpfilenm = "")
+        {
+            string user = "tmp_" + UserID;
+
+            if (manual == "MANUAL")
+            {
+                database.ExecuteNonQuery("if exists (select * from sys.tables where name='" + user + @"') drop table " + user + @"; Create table " + user + @" (MobileNo numeric) ;  ");
+                foreach (var m in mobList)
+                {
+                    database.ExecuteNonQuery(" Insert into " + user + @" values ('" + country_code + m + "')");
+                }
+
+                database.ExecuteNonQuery("delete d from " + user + @" d inner join globalBlackListNo b on b.mobile=d.MobileNo ");
+                /*rabi 14 jul 21*/
+                string sqlRestict = @"if exists(select * from smsrestrictmobile srm join [smsrestriction] sr on srm.smsrestrictionid=sr.id where userid='" + UserID + "' AND TYPE='U')" +
+                    " delete d from " + user + @" d inner join SMSRestrictmobile SRM on SRM.MobileNo='91'+d.MobileNo  join [SMSRestriction] SR on SRM.SMSRestrictioniD=SR.Id 
+                     WHERE UserId='" + UserID + "' AND TYPE='U' if exists(select * from smsrestrictmobile srm join [smsrestriction] sr on srm.smsrestrictionid=sr.id where SenderId='" + s + "' AND TYPE='S')" +
+                     " delete d from " + user + @" d inner join SMSRestrictmobile SRM on SRM.MobileNo='91'+d.MobileNo  join [SMSRestriction] SR on SRM.SMSRestrictioniD=SR.Id  WHERE SenderId='" + s + "' AND TYPE='S'";
+                database.ExecuteNonQuery(sqlRestict);
+
+            }
+
+            string colnm = Convert.ToString(database.GetScalarValue("if exists (select * from sys.tables where name='" + user + @"') select column_name From information_schema.columns where table_name = '" + user + @"' and ordinal_position = 1 else select '' "));
+            if (country_code != "" && manual != "MANUAL")
+                database.ExecuteNonQuery("if exists (select * from sys.tables where name='" + user + @"') update " + user + @" set [" + colnm + "] = '" + country_code + "'+convert(varchar,convert(bigint,[" + colnm + "])) ");
+
+            checkNumberDigitsAndUpdate(user, colnm);
+
+            string peid = getPEid(UserID);
+            string sql;
+            sql = GetSqlAccounts(dtAc);
+            DataTable dt = database.GetDataTable(sql);
+
+            Int32 rowcnt = Convert.ToInt32(database.GetScalarValue("if exists (select * from sys.tables where name='" + user + @"') select count(*) from " + user + @" else select 0 "));
+            dt.Columns.Add("cnt", typeof(string));
+
+            int totalPDU = 0;
+            for (int i = 0; i < dt.Rows.Count; i++) totalPDU += Convert.ToInt16(dt.Rows[i]["PDUSIZE"]);
+            Int32 totcnt = 0;
+            for (int i = 0; i < dt.Rows.Count; i++)
+            {
+                double per = (Convert.ToDouble(dt.Rows[i]["PDUSIZE"]) * 100) / Convert.ToDouble(totalPDU);
+                Int32 cntrow = Convert.ToInt32(rowcnt * (per / 100));
+                totcnt += cntrow;
+                dt.Rows[i]["cnt"] = cntrow.ToString();
+            }
+            int dif = 0;
+            if (totcnt < rowcnt)
+            {
+                dif = rowcnt - totcnt;
+                for (int i = 0; i < dt.Rows.Count; i++)
+                    dt.Rows[i]["cnt"] = Convert.ToString(Convert.ToInt32(dt.Rows[i]["cnt"]) + 1);
+            }
+
+            //Int32 cnt = (rowcnt / dt.Rows.Count);
+            //if (rowcnt % dt.Rows.Count > 0) cnt++;
+
+            database.ExecuteNonQuery("IF not EXISTS(SELECT 1 FROM sys.columns WHERE Name = N'SMPPACCOUNTID' AND Object_ID = Object_ID(N'" + user + "')) " +
+                " alter table " + user + @" add smppaccountid numeric(10) , shortsegment varchar(10) "); //add new column
+
+            //database.ExecuteNonQuery("alter table " + user + @" add smppaccountid numeric(10), shortsegment varchar(10) ");
+
+            for (int i = 0; i < dt.Rows.Count; i++)
+            {
+                sql = "update top (" + dt.Rows[i]["cnt"].ToString() + ") " + user + @" set smppaccountid = '" + dt.Rows[i]["smppaccountid"].ToString() + "' where smppaccountid is null ";
+                database.ExecuteNonQuery(sql);
+            }
+
+            sql = "update " + user + @" set shortsegment=left(NEWID(),8) ";
+            database.ExecuteNonQuery(sql);
+            //change SMPP ACCOUNT based on SMSTYPE
+
+            double CampaignCost = PrevBalance - AvailableBalance;
+
+            msg = msg.Replace("'", "''"); filenm = filenm.Replace("'", "''");
+            sql = @" Insert into SMSFILEUPLOAD (USERID,FILENM,EXTENSION,RECCOUNT,senderid,campaignname,smsrate,shortURLId,PrevBalance,CampaignCost,AvailableBalance,tmpFN,COUNTRYCODE) values ('" + UserID + "','" + filenm + "','" + filenmext + "','" + rowcnt.ToString() + "','" + s + "','" + campnm + "','" + rate + "','" + Convert.ToString(shortURLId) + "','" + PrevBalance + "','" + CampaignCost + "','" + AvailableBalance + "','" + tmpfilenm + "','" + country_code + "') " +
+                " declare @id numeric(10) select @id = max(id) from SMSFILEUPLOAD where userid='" + UserID + "' ; ";
+
+            //call sms test function test - get true / false
+            if (Helper.Global.Istemplatetest == false)
+            {
+                sql = sql + " select t.* into #t_01 from " + user + " t " +
+                    " delete d from " + user + " d inner join #t_01 t on d.[" + colnm + "] = t.[" + colnm + "]  ;  " +
+                    " alter table #t_01 add msgid varchar (100) ;  ";
+
+                for (int x = 0; x < noofsms; x++)
+                {
+                    string smsTex = GetSMSText(msg, x + 1, noofsms, ucs2);
+                    sql = sql + " update #t_01 set msgid=newid() " +
+                    " Insert into msgsubmitted (ID,PROVIDER,SMPPACCOUNTID,PROFILEID,MSGTEXT,TOMOBILE,SENDERID,CREATEDAT,SENTDATETIME,MSGID,INSERTDATE,FILEID,NSEND,smstext,smsrate) " +
+                    " select @id as id,'vcon',smppaccountid,'" + UserID + "',REPLACE(N'" + smsTex + "','" + shortURL + "','" + domain + "' + shortsegment),[" + colnm + "] as TOMOBILE,'" + s + "',GETDATE(),GETDATE(),msgid,getdate(),@id as fileid,'1'," +
+                    " REPLACE(N'" + msg + "','" + shortURL + "','" + domain + "' + shortsegment),'" + rate + "' from #t_01 ; " +
+                    " Insert into delivery (DLVRTEXT,MSGID,DLVRTIME,DLVRSTATUS,err_code,INSERTDATE) " +
+                    @" select 'id:' + MSGID + ' sub:001 dlvrd:001 submit date:' + RIGHT(CONVERT(VARCHAR,getdate(),112),6) + REPLACE(CONVERT(VARCHAR,getdate(),108),':','') + 
+                    ' done date:' + RIGHT(CONVERT(VARCHAR, GETDATE(), 112), 6) + REPLACE(CONVERT(VARCHAR, GETDATE(), 108), ':', '') + ' stat:UNDELIV err:" + Helper.Global.templateErrorCode + @" text:' AS DLVRTEXT, MSGID, GETDATE(), 'Undeliverable','" + Helper.Global.templateErrorCode + @"',getdate()
+                    FROM #t_01 ; ";
+                }
+
+                sql = sql + " insert into mobtrackurl(urlid, mobile, sentdate, segment,fileid,templateid) select " +
+               "'" + shortURLId.ToString() + "', [" + colnm + "] , getdate(),shortsegment,@id as fileid,'" + TemplateID + "' as templateid from #t_01 where [" + colnm + "] is not null ";
+
+            }
+            else
+            {
+                double Bper = GetBlockSMSper(UserID, "B");
+                if (Bper != 0 && retarget == "")
+                {
+                    Int32 cnt20 = Convert.ToInt32(Convert.ToDouble(rowcnt) * Bper);
+                    sql = sql + " select top " + cnt20 + " * into #t10 from " + user + " where [" + colnm + "] is not null and [" + colnm + "] not in (" + getWhiteListNo(UserID) + ") ORDER BY NEWID() " +
+                        " delete d from " + user + " d inner join #t10 t on d.[" + colnm + "] = t.[" + colnm + "]  ;  " +
+                        " alter table #t10 add msgid varchar (100) ; ";
+
+                    for (int x = 0; x < noofsms; x++)
+                    {
+                        string smsTex = GetSMSText(msg, x + 1, noofsms, ucs2);
+                        sql = sql + " update #t10 set msgid=newid() " +
+                        @" insert into notsubmitted (ID,PROVIDER,SMPPACCOUNTID,PROFILEID,MSGTEXT,TOMOBILE,SENDERID,CREATEDAT,SENTDATETIME,MSGID,INSERTDATE,FILEID,NSEND,smsrate)
+                        select @id as id,'vcon',smppaccountid,'" + UserID + "',REPLACE(N'" + smsTex + "','" + shortURL + "','" + domain + "' + shortsegment) ,[" + colnm + "] as TOMOBILE,'" + s + "',GETDATE(),GETDATE(),msgid,getdate(),@id as fileid,'1','" + rate + "' from #t10 ; " +
+                            " Insert into msgsubmitted (ID,PROVIDER,SMPPACCOUNTID,PROFILEID,MSGTEXT,TOMOBILE,SENDERID,CREATEDAT,SENTDATETIME,MSGID,INSERTDATE,FILEID,NSEND,smstext,smsrate) " +
+                            " select @id as id,'vcon',smppaccountid,'" + UserID + "',REPLACE(N'" + smsTex + "','" + shortURL + "','" + domain + "' + shortsegment) ,[" + colnm + "] as TOMOBILE,'" + s + "',GETDATE(),GETDATE(),msgid,getdate(),@id as fileid,'1'," +
+                            " REPLACE(N'" + msg + "','" + shortURL + "','" + domain + "' + shortsegment) ,'" + rate + "' from #t10 ; ";
+                    }
+                }
+                double Fper = GetBlockSMSper(UserID, "F");
+                if (Fper != 0 && retarget == "")
+                {
+                    Int32 cnt20 = Convert.ToInt32(Convert.ToDouble(rowcnt) * Fper);
+                    sql = sql + " select top " + cnt20 + " * into #t101 from " + user + " where [" + colnm + "] is not null and [" + colnm + "] not in (" + getWhiteListNo(UserID) + ") ORDER BY NEWID() " +
+                        " delete d from " + user + " d inner join #t101 t on d.[" + colnm + "] = t.[" + colnm + "]  ;  " +
+                        " alter table #t101 add msgid varchar (100) ; ";
+
+                    for (int x = 0; x < noofsms; x++)
+                    {
+                        string smsTex = GetSMSText(msg, x + 1, noofsms, ucs2);
+                        sql = sql + " update #t101 set msgid=newid() " +
+                        @" insert into FAILSUBMITTED (ID,PROVIDER,SMPPACCOUNTID,PROFILEID,MSGTEXT,TOMOBILE,SENDERID,CREATEDAT,SENTDATETIME,MSGID,INSERTDATE,FILEID,NSEND,smsrate)
+                        select @id as id,'vcon',smppaccountid,'" + UserID + "',REPLACE(N'" + smsTex + "','" + shortURL + "','" + domain + "' + shortsegment) ,[" + colnm + "] as TOMOBILE," +
+                            "'" + s + "',GETDATE(),GETDATE(),msgid,getdate(),@id as fileid,'1','" + rate + "' from #t101 ; " +
+                            " Insert into msgsubmitted (ID,PROVIDER,SMPPACCOUNTID,PROFILEID,MSGTEXT,TOMOBILE,SENDERID,CREATEDAT,SENTDATETIME,MSGID,INSERTDATE,FILEID,NSEND,smstext,smsrate) " +
+                            " select @id as id,'vcon',smppaccountid,'" + UserID + "',REPLACE(N'" + smsTex + "','" + shortURL + "','" + domain + "' + shortsegment) ,[" + colnm + "] as TOMOBILE,'" + s + "',GETDATE(),GETDATE(),msgid,getdate(),@id as fileid,'1'," +
+                            " REPLACE(N'" + msg + "','" + shortURL + "','" + domain + "' + shortsegment) ,'" + rate + "' from #t101 ; ";
+                    }
+                }
+                bool blu = blacklistuser(UserID);
+                if (blu)
+                {
+                    sql = sql + " select t.* into #t11 from " + user + " t left join BLACKLISTNO b on t.[" + colnm + "]=b.MOBILENO and b.userid='" + UserID + "' where b.MOBILENO is not null " +
+                        " delete d from " + user + " d inner join #t11 t on d.[" + colnm + "] = t.[" + colnm + "]  ;  " +
+                        " alter table #t11 add msgid varchar (100) ;  ";
+
+                    for (int x = 0; x < noofsms; x++)
+                    {
+                        string smsTex = GetSMSText(msg, x + 1, noofsms, ucs2);
+                        sql = sql + " update #t11 set msgid=newid() " +
+                        " Insert into msgsubmitted (ID,PROVIDER,SMPPACCOUNTID,PROFILEID,MSGTEXT,TOMOBILE,SENDERID,CREATEDAT,SENTDATETIME,MSGID,INSERTDATE,FILEID,NSEND,smstext,smsrate) " +
+                        " select @id as id,'vcon',smppaccountid,'" + UserID + "',REPLACE(N'" + smsTex + "','" + shortURL + "','" + domain + "' + shortsegment),[" + colnm + "] as TOMOBILE,'" + s + "',GETDATE(),GETDATE(),msgid,getdate(),@id as fileid,'1'," +
+                        " REPLACE(N'" + msg + "','" + shortURL + "','" + domain + "' + shortsegment),'" + rate + "' from #t11 ; " +
+                        " Insert into delivery (DLVRTEXT,MSGID,DLVRTIME,DLVRSTATUS,err_code,INSERTDATE) " +
+                        @" select 'id:' + MSGID + ' sub:001 dlvrd:001 submit date:' + RIGHT(cONVERT(VARCHAR,getdate(),112),6) + REPLACE(cONVERT(VARCHAR,getdate(),108),':','') + 
+                    ' done date:' + RIGHT(cONVERT(VARCHAR, GETDATE(), 112), 6) + REPLACE(cONVERT(VARCHAR, GETDATE(), 108), ':', '') + ' stat:BlackList err:250 text:' AS DLVRTEXT, MSGID, GETDATE(), 'BlackList','250',getdate()
+                    FROM #t11 ; ";
+                    }
+                }
+
+                bool isMobProcess = MobProcessUser(UserID);
+                if (isMobProcess)
+                {
+                    //PROCESS FAIL
+                    sql = sql + " select t.*,s.err_code into #mt11 from " + user + " t inner join BLOCKSMSERROR s with (nolock) on s.profileid='" + UserID + "' inner join UserMobile b with (nolock) on t.[" + colnm + "]=b.TOMOBILE and b.Profileid=s.profileid and s.err_code=b.err_code where s.DORF='F' " +
+                        " delete d from " + user + " d inner join #mt11 t on d.[" + colnm + "] = t.[" + colnm + "]  ;  " +
+                        " alter table #mt11 add msgid varchar (100) ;  ";
+
+                    for (int x = 0; x < noofsms; x++)
+                    {
+                        string smsTex = GetSMSText(msg, x + 1, noofsms, ucs2);
+                        sql = sql + " update #mt11 set msgid=newid() " +
+                        " Insert into msgsubmitted (ID,PROVIDER,SMPPACCOUNTID,PROFILEID,MSGTEXT,TOMOBILE,SENDERID,CREATEDAT,SENTDATETIME,MSGID,INSERTDATE,FILEID,NSEND,smstext,smsrate) " +
+                        " select @id as id,'vcon',smppaccountid,'" + UserID + "',REPLACE(N'" + smsTex + "','" + shortURL + "','" + domain + "' + shortsegment),[" + colnm + "] as TOMOBILE,'" + s + "',GETDATE(),GETDATE(),msgid,getdate(),@id as fileid,'1'," +
+                        " REPLACE(N'" + msg + "','" + shortURL + "','" + domain + "' + shortsegment),'" + rate + "' from #mt11 ; " +
+                        " Insert into delivery (DLVRTEXT,MSGID,DLVRTIME,DLVRSTATUS,err_code,INSERTDATE) " +
+                        @" select 'id:' + MSGID + ' sub:001 dlvrd:000 submit date:' + RIGHT(cONVERT(VARCHAR,getdate(),112),6) + REPLACE(cONVERT(VARCHAR,getdate(),108),':','') + 
+                    ' done date:' + RIGHT(cONVERT(VARCHAR, GETDATE(), 112), 6) + REPLACE(cONVERT(VARCHAR, GETDATE(), 108), ':', '') + ' stat:UNDELIV err:' + convert(varchar,err_code COLLATE SQL_Latin1_General_CP1_CI_AS) + ' text:' AS DLVRTEXT, MSGID, GETDATE(), 'Undeliverable',err_code,getdate()
+                    FROM #mt11 ; ";
+                    }
+
+                    //PROCESS DELIVERY
+                    sql = sql + " select t.* into #Dmt11 from " + user + " t inner join BLOCKSMSERROR s with (nolock) on s.profileid='" + UserID + "' inner join UserMobile b with (nolock) on t.[" + colnm + "]=b.TOMOBILE and b.Profileid=s.profileid and s.err_code=b.err_code where s.DORF='D' " +
+                        " delete d from " + user + " d inner join #Dmt11 t on d.[" + colnm + "] = t.[" + colnm + "]  ;  " +
+                        " alter table #Dmt11 add msgid varchar (100) ;  ";
+
+                    for (int x = 0; x < noofsms; x++)
+                    {
+                        string smsTex = GetSMSText(msg, x + 1, noofsms, ucs2);
+                        sql = sql + " update #Dmt11 set msgid=newid() " +
+                        " Insert into msgsubmitted (ID,PROVIDER,SMPPACCOUNTID,PROFILEID,MSGTEXT,TOMOBILE,SENDERID,CREATEDAT,SENTDATETIME,MSGID,INSERTDATE,FILEID,NSEND,smstext,smsrate) " +
+                        " select @id as id,'vcon',smppaccountid,'" + UserID + "',REPLACE(N'" + smsTex + "','" + shortURL + "','" + domain + "' + shortsegment),[" + colnm + "] as TOMOBILE,'" + s + "',GETDATE(),GETDATE(),msgid,getdate(),@id as fileid,'1'," +
+                        " REPLACE(N'" + msg + "','" + shortURL + "','" + domain + "' + shortsegment),'" + rate + "' from #Dmt11 ; " +
+                        " Insert into delivery (DLVRTEXT,MSGID,DLVRTIME,DLVRSTATUS,err_code,INSERTDATE) " +
+                        @" select 'id:' + MSGID + ' sub:001 dlvrd:001 submit date:' + RIGHT(cONVERT(VARCHAR,getdate(),112),6) + REPLACE(cONVERT(VARCHAR,getdate(),108),':','') + 
+                    ' done date:' + RIGHT(cONVERT(VARCHAR, GETDATE(), 112), 6) + REPLACE(cONVERT(VARCHAR, GETDATE(), 108), ':', '') + ' stat:DELIVRD err:000 text:' AS DLVRTEXT, MSGID, GETDATE(), 'Delivered','000',getdate()
+                    FROM #Dmt11 ; ";
+                    }
+                }
+
+                bool ClkBlk = ClickListUser(UserID);
+                string isdlr = "";
+                if (ClkBlk)
+                {
+                    DataTable dtCl = database.GetDataTable("Select * from ClickDataBlock where userid='" + UserID + "'");
+                    string noofdays = dtCl.Rows[0]["noofdays"].ToString();
+                    isdlr = dtCl.Rows[0]["ProcessType"].ToString();
+                    sql = sql + " select t.* into #t12 from " + user + " t inner join MobTrackURL m on m.urlid='" + shortURLId.ToString() + "' and t.[" + colnm + "]=m.mobile inner join (select distinct urlid from mobstats where shorturl_id='" + shortURLId.ToString() + "') s on m.id=s.urlid where m.sentdate >= DateAdd(Day,-" + noofdays + ",getdate()) ";
+                    sql = sql + " delete d from " + user + " d inner join #t12 t on d.[" + colnm + "] = t.[" + colnm + "]  ;  alter table #t12 add msgid varchar (100) ;  ";
+                    if (isdlr.ToUpper() == "DELIVERED")
+                    {
+                        for (int x = 0; x < noofsms; x++)
+                        {
+                            string smsTex = GetSMSText(msg, x + 1, noofsms, ucs2);
+                            sql = sql + " update #t12 set msgid=newid() " +
+                            " Insert into msgsubmitted (ID,PROVIDER,SMPPACCOUNTID,PROFILEID,MSGTEXT,TOMOBILE,SENDERID,CREATEDAT,SENTDATETIME,MSGID,INSERTDATE,FILEID,NSEND,smstext,smsrate) " +
+                            " select @id as id,'vcon',smppaccountid,'" + UserID + "',REPLACE(N'" + smsTex + "','" + shortURL + "','" + domain + "' + shortsegment),[" + colnm + "] as TOMOBILE,'" + s + "',GETDATE(),GETDATE(),msgid,getdate(),@id as fileid,'1'," +
+                            " REPLACE(N'" + msg + "','" + shortURL + "','" + domain + "' + shortsegment),'" + rate + "' from #t12 ; " +
+                            " Insert into delivery (DLVRTEXT,MSGID,DLVRTIME,DLVRSTATUS,err_code,INSERTDATE) " +
+                            @" select 'id:' + MSGID + ' sub:001 dlvrd:001 submit date:' + RIGHT(cONVERT(VARCHAR,getdate(),112),6) + REPLACE(cONVERT(VARCHAR,getdate(),108),':','') + 
+                        ' done date:' + RIGHT(cONVERT(VARCHAR, GETDATE(), 112), 6) + REPLACE(cONVERT(VARCHAR, GETDATE(), 108), ':', '') + ' stat:DELIVRD err:000 text:' AS DLVRTEXT, MSGID, GETDATE(), 'Delivered','000',getdate()
+                        FROM #t12 ; ";
+                        }
+                    }
+                    //if (isdlr.ToUpper() == "NOSUBMISSION")
+                    //{
+                    //    sql = sql + " delete d from " + user + " d inner join #t12 t on d.[" + colnm + "] = t.[" + colnm + "]  ;  ";
+                    //}
+                }
+
+                string dataCode = "";
+                if (SMSType == "8")
+                {
+                    if (ucs2)
+                        dataCode = "UnicodeFlashSMS";
+                    else
+                        dataCode = "DefaultFlashSMS";
+                }
+                else
+                {
+                    if (ucs2)
+                        dataCode = "UCS2";
+                    else
+                        dataCode = "Default";
+                }
+
+                sql = sql + @" INSERT INTO MSGTRAN (PROVIDER,SMPPACCOUNTID,PROFILEID,MSGTEXT,TOMOBILE,SENDERID,CREATEDAT,FILEID,peid,DATACODE,smsrate,templateid)
+                select 'VCON',smppaccountid,'" + UserID + "',REPLACE(N'" + msg + "','" + shortURL + "','" + domain + "' + shortsegment) ,[" + colnm + "] as TOMOBILE,'" + s + "',GETDATE(),@id as fileid,'" + peid + "' as peid,'" + dataCode + "' AS DATACODE,'" + rate.ToString() + "' as smsrate,'" + TemplateID + "' as templateid from " + user + " where [" + colnm + "] is not null ";
+                //database.ExecuteNonQuery(sql);
+                if (Bper != 0 && retarget == "")
+                {
+                    sql = sql + " insert into mobtrackurl (urlid, mobile, sentdate, segment,fileid,templateid) select " +
+                   "'" + shortURLId.ToString() + "', [" + colnm + "] , getdate(),shortsegment,@id as fileid,'" + TemplateID + "' as templateid from #t10 where [" + colnm + "] is not null ";
+                }
+                if (Fper != 0 && retarget == "")
+                {
+                    sql = sql + " insert into mobtrackurl (urlid, mobile, sentdate, segment,fileid,templateid) select " +
+                   "'" + shortURLId.ToString() + "', [" + colnm + "] , getdate(),shortsegment,@id as fileid,'" + TemplateID + "' as templateid   from #t101 where [" + colnm + "] is not null ";
+                }
+                if (blu)
+                {
+                    sql = sql + " insert into mobtrackurl (urlid, mobile, sentdate, segment,fileid,templateid) select " +
+                   "'" + shortURLId.ToString() + "', [" + colnm + "] , getdate(),shortsegment,@id as fileid,'" + TemplateID + "' as templateid  from #t11 where [" + colnm + "] is not null ";
+                }
+                if (ClkBlk)
+                {
+                    if (isdlr.ToUpper() == "DELIVERED")
+                    {
+                        sql = sql + " insert into mobtrackurl (urlid, mobile, sentdate, segment,fileid,templateid) select " +
+                        "'" + shortURLId.ToString() + "', [" + colnm + "] , getdate(),shortsegment,@id as fileid,'" + TemplateID + "' as templateid  from #t12 where [" + colnm + "] is not null ";
+                    }
+                }
+                sql = sql + " insert into mobtrackurl (urlid, mobile, sentdate, segment,fileid,templateid) select " +
+                   "'" + shortURLId.ToString() + "', [" + colnm + "] , getdate(),shortsegment,@id as fileid,'" + TemplateID + "' as templateid  from " + user + " where [" + colnm + "] is not null ";
+
+                // double bal = CalculateAmount(UserID, noof_message, rate, smscount);
+                double bal = CalculateSMSCost(noof_message, Convert.ToDouble(rate));
+                sql = sql + " update customer set balance = balance - '" + bal + "' where username = '" + UserID + "'";
+
+            }
+
+            try
+            {
+                database.ExecuteNonQuery(sql);
+            }
+            catch (Exception ex)
+            {
+                LogError("Error in Insert_SMS_BULK_4url method !  ", ex.Message + " - " + ex.StackTrace + " -- " + sql);
+                throw ex;
+            }
+
+        }
+        // ---<-------------- SMS SENDING METHODS B4 SEND ----------------
+
+
+        public double CalculateAmount(string UserID, long cnt, double rate, double smscnt)
+        {
+            string b = Convert.ToString(database.GetScalarValue("Select balance from customer with (nolock) where username='" + UserID + "'"));
+            double bal = Convert.ToDouble(b) * 1000;
+            bal = bal - Convert.ToDouble((cnt * (rate * 10)));
+            bal = Math.Round((bal / 1000), 3);
+            return bal;
+        }
+
+        public double CalculateRCSAmount(string UserID, long cnt, double rate, double smscnt)
+        {
+            string b = Convert.ToString(database.GetScalarValue("Select rcsbalance from customer with (nolock) where username='" + UserID + "'"));
+            double bal = Convert.ToDouble(b) * 1000;
+            bal = bal - Convert.ToDouble((cnt * (rate * 10)));
+            bal = Math.Round((bal / 1000), 3);
+            return bal;
+        }
+
+        public double CalculateSMSCost(long cnt, double rate)
+        {
+            double bal = 0;
+            bal = (cnt * rate) / 100;
+            return Convert.ToDouble(Math.Round(bal, 3));
+        }
+
+        public DataTable GetSMSRateAsPerCountry(string User, string ccode)
+        {
+            DataTable dt = new DataTable("dt");
+            string sql = "";
+            sql = "select * from smsrateaspercountry where username='" + User + "' and countrycode='" + ccode + "'";
+            dt = database.GetDataTable(sql);
+            return dt;
+        }
+
+        public DataTable GetRCSRateAsPerCountry(string User, string ccode)
+        {
+            DataTable dt = new DataTable("dt");
+            string sql = "";
+            sql = "select * from tblrcsratemaster where username='" + User + "' and countrycode='" + ccode + "'";
+            dt = database.GetDataTable(sql);
+            return dt;
+        }
+
+        public string GetSMSText(string msg, int x, int noofsms, bool ucs2)
+        {
+            string ret = "";
+            msg = msg.Replace("''", "'");
+            if (ucs2)
+            {
+                if (noofsms == 1) ret = msg;
+                if (x == 1) { if (msg.Length > 70) ret = msg.Substring(0, 70); else ret = msg.Substring(0); }
+                if (x == 2) { if (msg.Length > 134) ret = msg.Substring(70, 64); else ret = msg.Substring(70); }
+                if (x == 3) { if (msg.Length > 201) ret = msg.Substring(134, 67); else ret = msg.Substring(134); }
+                if (x == 4) { if (msg.Length > 268) ret = msg.Substring(201, 67); else ret = msg.Substring(201); }
+                if (x == 5) { if (msg.Length > 335) ret = msg.Substring(268, 67); else ret = msg.Substring(268); }
+                if (x == 6) { if (msg.Length > 402) ret = msg.Substring(335, 67); else ret = msg.Substring(335); }
+                if (x == 7) { if (msg.Length > 469) ret = msg.Substring(402, 67); else ret = msg.Substring(402); }
+                if (x == 8) { if (msg.Length > 536) ret = msg.Substring(469, 67); else ret = msg.Substring(469); }
+                if (x == 9) { if (msg.Length > 603) ret = msg.Substring(536, 67); else ret = msg.Substring(536); }
+                if (x == 10) { if (msg.Length > 670) ret = msg.Substring(603, 67); else ret = msg.Substring(603); }
+            }
+            else
+            {
+                if (noofsms == 1) ret = msg;
+                if (x == 1) { if (msg.Length > 160) ret = msg.Substring(0, 160); else ret = msg.Substring(0); }
+                if (x == 2) { if (msg.Length > 306) ret = msg.Substring(160, 146); else ret = msg.Substring(160); }
+                if (x == 3) { if (msg.Length > 459) ret = msg.Substring(306, 153); else ret = msg.Substring(306); }
+                if (x == 4) { if (msg.Length > 612) ret = msg.Substring(459, 153); else ret = msg.Substring(459); }
+                if (x == 5) { if (msg.Length > 765) ret = msg.Substring(612, 153); else ret = msg.Substring(612); }
+                if (x == 6) { if (msg.Length > 918) ret = msg.Substring(765, 153); else ret = msg.Substring(765); }
+                if (x == 7) { if (msg.Length > 1071) ret = msg.Substring(918, 153); else ret = msg.Substring(918); }
+                if (x == 8) { if (msg.Length > 1224) ret = msg.Substring(1071, 153); else ret = msg.Substring(1071); }
+                if (x == 9) { if (msg.Length > 1377) ret = msg.Substring(1224, 153); else ret = msg.Substring(1224); }
+                if (x == 10) { if (msg.Length > 1530) ret = msg.Substring(1377, 153); else ret = msg.Substring(1377); }
+            }
+            return ret.Replace("'", "''");
+        }
+        public double GetBlockSMSper(string userid, string typ)
+        {
+            DataTable dt = database.GetDataTable("select isnull(" + (typ == "B" ? "blockpercent" : "failpercent") + ",0) as bp from blocksms where userid='" + userid + "'");
+            if (dt.Rows.Count > 0)
+                return Convert.ToDouble(dt.Rows[0]["bp"]);
+            else return 0;
+        }
+        public string getWhiteListNo(string userid)
+        {
+            string s = "'0'";
+            DataTable dt = new DataTable();
+            dt = database.GetDataTable("select mobile from blocksmswhitelist where userid='" + userid + "' union all select mobile from blocksmswhitelistglobal");
+            if (dt.Rows.Count > 0)
+            {
+                for (int k = 0; k < dt.Rows.Count; k++) s = s + ",'" + dt.Rows[k]["mobile"].ToString() + "'";
+            }
+            return s;
+        }
+        public bool blacklistuser(string userid)
+        {
+            if (Convert.ToInt64(database.GetScalarValue("Select count(*) as cnt from blacklistno where userid='" + userid + "'")) > 0)
+                return true;
+            else return false;
+        }
+        public bool ClickListUser(string userid)
+        {
+            if (Convert.ToInt64(database.GetScalarValue("Select count(*) as cnt from ClickDataBlock where userid='" + userid + "'")) > 0)
+                return true;
+            else return false;
+        }
+        public bool MobProcessUser(string userid)
+        {
+            if (Convert.ToInt64(database.GetScalarValue("Select count(*) as cnt from BLOCKSMSERROR with (nolock) where profileid='" + userid + "'")) > 0)
+                return true;
+            else return false;
+        }
+
+        public string GetDataType(string userId, string colnm)
+        {
+            string user = "tmp1_" + userId;
+            string coltype = Convert.ToString(database.GetScalarValue("SELECT DATA_TYPE FROM INFORMATION_SCHEMA.COLUMNS WHERE TABLE_NAME = '" + user + @"' and COLUMN_NAME = '" + colnm + "'"));
+            if (coltype.ToUpper().Contains("DATE"))
+                return "DATE";
+            else
+                return "";
+        }
+        public bool checkblacklistno(string UserID, string mobile)
+        {
+            return Convert.ToInt64(database.GetScalarValue("select count(*) from blacklistno where userid='" + UserID + "' and mobileno='" + mobile + "' ")) > 0 ? true : false;
+        }
+
+        public string checMobProcessNo(string UserID, string mobile)
+        {
+            string sql = "Select S.ERR_CODE + ';' + S.DORF from usermobile u with (nolock) inner join BLOCKSMSERROR S ON U.PROFILEID=S.PROFILEID AND U.ERR_CODE=S.ERR_CODE where U.profileid='" + UserID + "' and U.tomobile='" + mobile + "'";
+            return Convert.ToString(database.GetScalarValue(sql));
+        }
+
+        public string getPEid(string user)
+        {
+            return Convert.ToString(database.GetScalarValue("Select isnull(PEID,'') from customer where username='" + user + "'"));
+        }
+        public string GetMainSenderId(string user)
+        {
+            return Convert.ToString(database.GetScalarValue("Select senderid from customer where username='" + user + "'"));
+        }
+
+        public void DropUserTmpTable(string user)
+        {
+            string table = "tmp_" + user;
+            string sql = @"if exists (select * from sys.tables where name='" + table + @"') drop table " + table;
+            database.ExecuteNonQuery(sql);
+
+            string table1 = "tmp1_" + user;
+            sql = @"if exists (select * from sys.tables where name='" + table1 + @"') drop table " + table1;
+            database.ExecuteNonQuery(sql);
+
+            string table2 = "tmpEx_" + user;
+            sql = @"if exists (select * from sys.tables where name='" + table2 + @"') drop table " + table2;
+            database.ExecuteNonQuery(sql);
+
+            string table3 = "tmp1Ex_" + user;
+            sql = @"if exists (select * from sys.tables where name='" + table3 + @"') drop table " + table3;
+            database.ExecuteNonQuery(sql);
+        }
+        public void SaveURL_MOBILE(string UserID, int urlid, string mobile, string mseg, string resp, string countryCode, string fileid, string templateid)
+        {
+            mobile = countryCode + mobile;
+            string sql = "insert into mobtrackurl (urlid, mobile, sentdate, segment, msgid, dlvrd,fileid, templateid) values " +
+                "('" + urlid.ToString() + "','" + mobile + "',getdate(),'" + mseg + "','" + resp + "','','" + fileid + "','" + templateid + "')";
+            database.ExecuteNonQuery(sql);
+        }
+        public string UdateAndGetURLbal(string UserID)
+        {
+            return "0";
+        }
+        public string UdateAndGetURLbal1(string UserID, string shorturl)
+        {
+            string b = "1000";
+            string sql = "update customer set balance = balance - urlrate, noofhit=noofhit+" + b + " where Username='" + UserID + "' ; " +
+                "insert into ClickBalanceLog (userid, shorturl, clickbal) values ('" + UserID + "','" + shorturl + "','" + b + "') ";
+            database.ExecuteNonQuery(sql);
+            sql = "Select balance from customer where Username='" + UserID + "' ";
+            string s = Convert.ToString(database.GetScalarValue(sql));
+            return s;
+        }
+        public string GetClickBalance(string UserID)
+        {
+            return Convert.ToString(database.GetScalarValue("select noofhit from cusstomer where username='" + UserID + "'"));
+        }
+
+        public DataTable GetURLSofUser_4QR(string User, string shUrl, string domain)
+        {
+            DataTable dt = new DataTable("dt");
+            string sh = domain;
+            string sql = "";
+            if (shUrl == "")
+                sql = "Select '" + sh + "' + segment as shorturl from short_urls where userid='" + User + "' AND RIGHT(SEGMENT,2)<>'_Q' AND MAINURL=1 order by added desc";
+            else
+                sql = "Select long_url from short_urls where userid='" + User + "' and '" + sh + "' + segment = '" + shUrl + "'";
+
+            dt = database.GetDataTable(sql);
+            return dt;
+        }
+        public DataTable GetURLSofUser_4SMSSEND(string User, string shUrl, string domain)
+        {
+            DataTable dt = new DataTable("dt");
+            string sh = domain;
+            string sql = "";
+            if (shUrl == "")
+                sql = "Select ISNULL(urlname,'') + '    ' + '" + sh + "' + segment as shorturlDISP, '" + sh + "' + segment as shorturl from short_urls where userid='" + User + "' AND RIGHT(SEGMENT,2)<>'_Q' AND MAINURL=0 order by added desc";
+            else
+                sql = "Select long_url from short_urls where userid='" + User + "' and '" + sh + "' + segment = '" + shUrl + "'";
+
+            dt = database.GetDataTable(sql);
+            return dt;
+        }
+
+        public DataTable GetURLSofUser(string User, string shUrl, string domain)
+        {
+            DataTable dt = new DataTable("dt");
+            string sh = domain;
+            string sql = "";
+            if (shUrl == "")
+                sql = "Select '" + sh + "' + segment as shorturl from short_urls where userid='" + User + "' AND RIGHT(SEGMENT,2)<>'_Q' order by added desc";
+            else
+                sql = "Select long_url from short_urls where userid='" + User + "' and '" + sh + "' + segment = '" + shUrl + "'";
+
+            dt = database.GetDataTable(sql);
+            return dt;
+        }
+
+        public void STOREURL(string userid, string LongURL, string ip, string ShortURL, string mobTrk)
+        {
+            string sql = "insert into SHORT_URLS (long_url,segment,added,ip,num_of_clicks,userid,mobtrack) VALUES " +
+                "('" + LongURL + "','" + ShortURL + "',GETDATE(),'" + ip + "','0','" + userid + "','N')";
+            database.ExecuteNonQuery(sql);
+
+        }
+        public string GetExistingShortURL(string longurl, string userid)
+        {
+            return Convert.ToString(database.GetScalarValue("select isnull(segment,'') from short_urls where userid='" + userid + "' and long_url='" + longurl + "'"));
+        }
+
+        public DataTable GetSMPP_Account_Load()
+        {
+            DataTable dt = new DataTable("dt");
+            string sql = @"select s.SMPPACCOUNTID,count(t.id) as cnt from SMPPSETTING s inner join MSGTRAN t on s.SMPPACCOUNTID=t.SMPPACCOUNTID
+                where s.ACTIVE = 1 group by s.SMPPACCOUNTID";
+            dt = Helper.dbmain.GetDataTable(sql);
+            return dt;
+        }
+
+        public string UpdateAndGetBalance(string UserID, string smstype, Int32 cnt, double rate)
+        {
+            string b = Convert.ToString(database.GetScalarValue("Select balance from customer with(nolock) where username='" + UserID + "'"));
+            double bal = Convert.ToDouble(b) * 1000;
+            bal = bal - Convert.ToDouble(cnt * (rate * 10));
+            bal = Math.Round((bal / 1000), 3);
+            database.ExecuteNonQuery("update customer set balance = '" + bal + "' where username = '" + UserID + "'");
+            return bal.ToString();
+            //int rate = 0;
+            //if (smstype == "1") rate = Convert.ToInt32(Session[""]);
+        }
+
+        public void DeleteTemplateInTemplateId(string senderId, string tempid)
+        {
+            string sql = string.Format("Delete from TemplateID where senderid ='{0}' AND templateid ='{1}' ", senderId, tempid);
+            database.ExecuteNonQuery(sql);
+        }
+        public void DeleteTemplateInRequest(string username, string tempid)
+        {
+            string sql = string.Format("Delete from templaterequest where username ='{0}' AND templateid ='{1}' ", username, tempid);
+            database.ExecuteNonQuery(sql);
+        }
+        public void SaveTemplateInTemplateId(string senderId, string msg, string tempWord, string tempname, string tempid)
+        {
+            string sql = @"insert into TemplateID (senderid,msgtext,insertdate,tempwords,templatename,templateid)
+            values('" + senderId + "', N'" + msg.Replace("'", "''") + "', getdate(), N'" + tempWord.Replace("'", "''") + "','" + tempname + "','" + tempid + "')";
+            database.ExecuteNonQuery(sql);
+        }
+        public DataTable GetTemplateListOfAPI(string senderId)
+        {
+            DataTable dt = new DataTable("dt");
+            string sql = @"select templateID  ,templateName [tempname],msgtext [template] from TemplateID where senderid = '" + senderId + "' order by insertdate desc";
+            dt = database.GetDataTable(sql);
+            return dt;
+        }
+
+        public string GetDLTofUser(string user)
+        {
+            return Convert.ToString(database.GetScalarValue("Select DLTNO from customer where username='" + user + "'"));
+        }
+
+        public void SaveMultipleSenderIdRequest(string query)
+        {
+            database.ExecuteNonQuery(query);
+        }
+
+        #region Comment by Rachit 25-01-22
+
+        //public void SaveSenderIDRequest(string user, string senderid, string fn)
+        //{
+        //    string sql = @"insert into senderidrequeset (username,senderid,createdat,filepath)
+        //    values('" + user + "', '" + senderid + "', getdate(), '" + fn + "')";
+        //    database.ExecuteNonQuery(sql);
+        //}
+
+        //public void SaveSenderIDRequest1(string user, string senderid, string fn)
+        //{
+        //    string sql = @"insert into senderidrequeset (username,senderid,createdat,filepath)
+        //    values('" + user + "', '" + senderid + "', getdate(), '" + fn + "')";
+        //    database.ExecuteNonQuery(sql);
+        //}
+        //public void SaveSenderIDRequest2(string user, string senderid1, string senderid2, string fn)
+        //{
+        //    string sql = @"insert into senderidrequeset (username,senderid,createdat,filepath)
+        //    values('" + user + "', '" + senderid1 + "', getdate(), '" + fn + "'),('" + user + "', '" + senderid2 + "', getdate(), '" + fn + "')";
+        //    database.ExecuteNonQuery(sql);
+        //}
+        //public void SaveSenderIDRequest3(string user, string senderid1, string senderid2, string senderid3, string fn)
+        //{
+        //    string sql = @"insert into senderidrequeset (username,senderid,createdat,filepath)
+        //    values('" + user + "', '" + senderid1 + "', getdate(), '" + fn + "'),('" + user + "', '" + senderid2 + "', getdate(), '" + fn + "'),('" + user + "', '" + senderid3 + "', getdate(), '" + fn + "')";
+        //    database.ExecuteNonQuery(sql);
+        //}
+        //public void SaveSenderIDRequest4(string user, string senderid1, string senderid2, string senderid3, string senderid4, string fn)
+        //{
+        //    string sql = @"insert into senderidrequeset (username,senderid,createdat,filepath)
+        //    values('" + user + "', '" + senderid1 + "', getdate(), '" + fn + "'),('" + user + "', '" + senderid2 + "', getdate(), '" + fn + "'),('" + user + "', '" + senderid3 + "', getdate(), '" + fn + "'),('" + user + "', '" + senderid4 + "', getdate(), '" + fn + "')";
+        //    database.ExecuteNonQuery(sql);
+        //}
+
+        //public void SaveSenderIDRequest5(string user, string senderid1, string senderid2, string senderid3, string senderid4, string senderid5, string fn)
+        //{
+        //    string sql = @"insert into senderidrequeset (username,senderid,createdat,filepath)
+        //    values('" + user + "', '" + senderid1 + "', getdate(), '" + fn + "'),('" + user + "', '" + senderid2 + "', getdate(), '" + fn + "'),('" + user + "', '" + senderid3 + "', getdate(), '" + fn + "'),('" + user + "', '" + senderid4 + "', getdate(), '" + fn + "'),('" + user + "', '" + senderid5 + "', getdate(), '" + fn + "')";
+        //    database.ExecuteNonQuery(sql);
+        //}
+
+        //public void SaveSenderIDRequest6(string user, string senderid1, string senderid2, string senderid3, string senderid4, string senderid5, string senderid6, string fn)
+        //{
+        //    string sql = @"insert into senderidrequeset (username,senderid,createdat,filepath)
+        //    values('" + user + "', '" + senderid1 + "', getdate(), '" + fn + "'),('" + user + "', '" + senderid2 + "', getdate(), '" + fn + "'),('" + user + "', '" + senderid3 + "', getdate(), '" + fn + "'),('" + user + "', '" + senderid4 + "', getdate(), '" + fn + "'),('" + user + "', '" + senderid5 + "', getdate(), '" + fn + "'),('" + user + "', '" + senderid6 + "', getdate(), '" + fn + "')";
+        //    database.ExecuteNonQuery(sql);
+        //}
+        //public void SaveSenderIDRequest7(string user, string senderid1, string senderid2, string senderid3, string senderid4, string senderid5, string senderid6, string senderid7, string fn)
+        //{
+        //    string sql = @"insert into senderidrequeset (username,senderid,createdat,filepath)
+        //    values('" + user + "', '" + senderid1 + "', getdate(), '" + fn + "'),('" + user + "', '" + senderid2 + "', getdate(), '" + fn + "'),('" + user + "', '" + senderid3 + "', getdate(), '" + fn + "'),('" + user + "', '" + senderid4 + "', getdate(), '" + fn + "'),('" + user + "', '" + senderid5 + "', getdate(), '" + fn + "'),('" + user + "', '" + senderid6 + "', getdate(), '" + fn + "'),('" + user + "', '" + senderid7 + "', getdate(), '" + fn + "')";
+        //    database.ExecuteNonQuery(sql);
+        //}
+        //public void SaveSenderIDRequest8(string user, string senderid1, string senderid2, string senderid3, string senderid4, string senderid8, string senderid5, string senderid6, string senderid7, string fn)
+        //{
+        //    string sql = @"insert into senderidrequeset (username,senderid,createdat,filepath)
+        //    values('" + user + "', '" + senderid1 + "', getdate(), '" + fn + "'),('" + user + "', '" + senderid2 + "', getdate(), '" + fn + "'),('" + user + "', '" + senderid3 + "', getdate(), '" + fn + "'),('" + user + "', '" + senderid4 + "', getdate(), '" + fn + "'),('" + user + "', '" + senderid5 + "', getdate(), '" + fn + "'),('" + user + "', '" + senderid6 + "', getdate(), '" + fn + "'),('" + user + "', '" + senderid7 + "', getdate(), '" + fn + "'),('" + user + "', '" + senderid8 + "', getdate(), '" + fn + "')";
+        //    database.ExecuteNonQuery(sql);
+        //}
+        //public void SaveSenderIDRequest9(string user, string senderid1, string senderid2, string senderid3, string senderid4, string senderid5, string senderid6, string senderid7, string senderid8, string senderid9, string fn)
+        //{
+        //    string sql = @"insert into senderidrequeset (username,senderid,createdat,filepath)
+        //    values('" + user + "', '" + senderid1 + "', getdate(), '" + fn + "'),('" + user + "', '" + senderid2 + "', getdate(), '" + fn + "'),('" + user + "', '" + senderid3 + "', getdate(), '" + fn + "'),('" + user + "', '" + senderid4 + "', getdate(), '" + fn + "'),('" + user + "', '" + senderid5 + "', getdate(), '" + fn + "'),('" + user + "', '" + senderid6 + "', getdate(), '" + fn + "'),('" + user + "', '" + senderid7 + "', getdate(), '" + fn + "'),('" + user + "', '" + senderid8 + "', getdate(), '" + fn + "'),('" + user + "', '" + senderid9 + "', getdate(), '" + fn + "')";
+        //    database.ExecuteNonQuery(sql);
+        //}
+
+        //public void SaveSenderIDRequest10(string user, string senderid1, string senderid2, string senderid3, string senderid4, string senderid5, string senderid6, string senderid7, string senderid8, string senderid9, string senderid10, string fn)
+        //{
+        //    string sql = @"insert into senderidrequeset (username,senderid,createdat,filepath)
+        //    values('" + user + "', '" + senderid1 + "', getdate(), '" + fn + "'),('" + user + "', '" + senderid2 + "', getdate(), '" + fn + "'),('" + user + "', '" + senderid3 + "', getdate(), '" + fn + "'),('" + user + "', '" + senderid4 + "', getdate(), '" + fn + "'),('" + user + "', '" + senderid5 + "', getdate(), '" + fn + "'),('" + user + "', '" + senderid6 + "', getdate(), '" + fn + "'),('" + user + "', '" + senderid7 + "', getdate(), '" + fn + "'),('" + user + "', '" + senderid8 + "', getdate(), '" + fn + "'),('" + user + "', '" + senderid9 + "', getdate(), '" + fn + "'),('" + user + "', '" + senderid10 + "', getdate(), '" + fn + "')";
+        //    database.ExecuteNonQuery(sql);
+        //}
+
+        //public void SaveSenderIDRequest11(string user, string senderid1, string senderid2, string senderid3, string senderid4, string senderid5, string senderid6, string senderid7, string senderid8, string senderid9, string senderid10, string senderid11, string fn)
+        //{
+        //    string sql = @"insert into senderidrequeset (username,senderid,createdat,filepath)
+        //    values('" + user + "', '" + senderid1 + "', getdate(), '" + fn + "'),('" + user + "', '" + senderid2 + "', getdate(), '" + fn + "'),('" + user + "', '" + senderid3 + "', getdate(), '" + fn + "'),('" + user + "', '" + senderid4 + "', getdate(), '" + fn + "'),('" + user + "', '" + senderid5 + "', getdate(), '" + fn + "'),('" + user + "', '" + senderid6 + "', getdate(), '" + fn + "'),('" + user + "', '" + senderid7 + "', getdate(), '" + fn + "'),('" + user + "', '" + senderid8 + "', getdate(), '" + fn + "'),('" + user + "', '" + senderid9 + "', getdate(), '" + fn + "'),('" + user + "', '" + senderid10 + "', getdate(), '" + fn + "'),('" + user + "', '" + senderid11 + "', getdate(), '" + fn + "')";
+        //    database.ExecuteNonQuery(sql);
+        //}
+        //public void SaveSenderIDRequest12(string user, string senderid1, string senderid2, string senderid3, string senderid4, string senderid5, string senderid6, string senderid7, string senderid8, string senderid9, string senderid10, string senderid11, string senderid12, string fn)
+        //{
+        //    string sql = @"insert into senderidrequeset (username,senderid,createdat,filepath)
+        //    values('" + user + "', '" + senderid1 + "', getdate(), '" + fn + "'),('" + user + "', '" + senderid2 + "', getdate(), '" + fn + "'),('" + user + "', '" + senderid3 + "', getdate(), '" + fn + "'),('" + user + "', '" + senderid4 + "', getdate(), '" + fn + "'),('" + user + "', '" + senderid5 + "', getdate(), '" + fn + "'),('" + user + "', '" + senderid6 + "', getdate(), '" + fn + "'),('" + user + "', '" + senderid7 + "', getdate(), '" + fn + "'),('" + user + "', '" + senderid8 + "', getdate(), '" + fn + "'),('" + user + "', '" + senderid9 + "', getdate(), '" + fn + "'),('" + user + "', '" + senderid10 + "', getdate(), '" + fn + "'),('" + user + "', '" + senderid11 + "', getdate(), '" + fn + "')";
+        //    database.ExecuteNonQuery(sql);
+        //}
+        //public void SaveSenderIDRequest13(string user, string senderid1, string senderid2, string senderid3, string senderid4, string senderid5, string senderid6, string senderid7, string senderid8, string senderid9, string senderid10, string senderid11, string senderid12, string senderid13, string fn)
+        //{
+        //    string sql = @"insert into senderidrequeset (username,senderid,createdat)
+        //    values('" + user + "', '" + senderid1 + "', getdate(), '" + fn + "'),('" + user + "', '" + senderid2 + "', getdate(), '" + fn + "'),('" + user + "', '" + senderid3 + "', getdate(), '" + fn + "'),('" + user + "', '" + senderid4 + "', getdate(), '" + fn + "'),('" + user + "', '" + senderid5 + "', getdate(), '" + fn + "'),('" + user + "', '" + senderid6 + "', getdate(), '" + fn + "'),('" + user + "', '" + senderid7 + "', getdate(), '" + fn + "'),('" + user + "', '" + senderid8 + "', getdate(), '" + fn + "'),('" + user + "', '" + senderid9 + "', getdate(), '" + fn + "'),('" + user + "', '" + senderid10 + "', getdate(), '" + fn + "'),('" + user + "', '" + senderid11 + "', getdate(), '" + fn + "'),('" + user + "', '" + senderid12 + "', getdate(), '" + fn + "'),('" + user + "', '" + senderid13 + "', getdate(), '" + fn + "')";
+        //    database.ExecuteNonQuery(sql);
+        //}
+        //public void SaveSenderIDRequest14(string user, string senderid1, string senderid2, string senderid3, string senderid4, string senderid5, string senderid6, string senderid7, string senderid8, string senderid9, string senderid10, string senderid11, string senderid12, string senderid13, string senderid14, string fn)
+        //{
+        //    string sql = @"insert into senderidrequeset (username,senderid,createdat,filepath)
+        //    values('" + user + "', '" + senderid1 + "', getdate(), '" + fn + "'),('" + user + "', '" + senderid2 + "', getdate(), '" + fn + "'),('" + user + "', '" + senderid3 + "', getdate(), '" + fn + "'),('" + user + "', '" + senderid4 + "', getdate(), '" + fn + "'),('" + user + "', '" + senderid5 + "', getdate(), '" + fn + "'),('" + user + "', '" + senderid6 + "', getdate(), '" + fn + "'),('" + user + "', '" + senderid7 + "', getdate(), '" + fn + "'),('" + user + "', '" + senderid8 + "', getdate(), '" + fn + "'),('" + user + "', '" + senderid9 + "', getdate(), '" + fn + "'),('" + user + "', '" + senderid10 + "', getdate(), '" + fn + "'),('" + user + "', '" + senderid11 + "', getdate(), '" + fn + "'),('" + user + "', '" + senderid12 + "', getdate(), '" + fn + "'),('" + user + "', '" + senderid13 + "', getdate(), '" + fn + "'),('" + user + "', '" + senderid14 + "', getdate(), '" + fn + "')";
+        //    database.ExecuteNonQuery(sql);
+        //}
+        //public void SaveSenderIDRequest15(string user, string senderid1, string senderid2, string senderid3, string senderid4, string senderid5, string senderid6, string senderid7, string senderid8, string senderid9, string senderid10, string senderid11, string senderid12, string senderid13, string senderid14, string senderid15, string fn)
+        //{
+        //    string sql = @"insert into senderidrequeset (username,senderid,createdat,filepath)
+        //    values('" + user + "', '" + senderid1 + "', getdate(), '" + fn + "'),('" + user + "', '" + senderid2 + "', getdate(), '" + fn + "'),('" + user + "', '" + senderid3 + "', getdate(), '" + fn + "'),('" + user + "', '" + senderid4 + "', getdate(), '" + fn + "'),('" + user + "', '" + senderid5 + "', getdate(), '" + fn + "'),('" + user + "', '" + senderid6 + "', getdate(), '" + fn + "'),('" + user + "', '" + senderid7 + "', getdate(), '" + fn + "'),('" + user + "', '" + senderid8 + "', getdate(), '" + fn + "'),('" + user + "', '" + senderid9 + "', getdate(), '" + fn + "'),('" + user + "', '" + senderid10 + "', getdate(), '" + fn + "'),('" + user + "', '" + senderid11 + "', getdate(), '" + fn + "'),('" + user + "', '" + senderid12 + "', getdate(), '" + fn + "'),('" + user + "', '" + senderid13 + "', getdate(), '" + fn + "'),('" + user + "', '" + senderid14 + "', getdate(), '" + fn + "'),('" + user + "', '" + senderid15 + "', getdate(), '" + fn + "')";
+        //    database.ExecuteNonQuery(sql);
+        //}
+        //public void SaveSenderIDRequest16(string user, string senderid1, string senderid2, string senderid3, string senderid4, string senderid5, string senderid6, string senderid7, string senderid8, string senderid9, string senderid10, string senderid11, string senderid12, string senderid13, string senderid14, string senderid15, string senderid16, string fn)
+        //{
+        //    string sql = @"insert into senderidrequeset (username,senderid,createdat,filepath)
+        //    values('" + user + "', '" + senderid1 + "', getdate(), '" + fn + "'),('" + user + "', '" + senderid2 + "', getdate(), '" + fn + "'),('" + user + "', '" + senderid3 + "', getdate(), '" + fn + "'),('" + user + "', '" + senderid4 + "', getdate(), '" + fn + "'),('" + user + "', '" + senderid5 + "', getdate(), '" + fn + "'),('" + user + "', '" + senderid6 + "', getdate(), '" + fn + "'),('" + user + "', '" + senderid7 + "', getdate(), '" + fn + "'),('" + user + "', '" + senderid8 + "', getdate(), '" + fn + "'),('" + user + "', '" + senderid9 + "', getdate(), '" + fn + "'),('" + user + "', '" + senderid10 + "', getdate(), '" + fn + "'),('" + user + "', '" + senderid11 + "', getdate(), '" + fn + "'),('" + user + "', '" + senderid12 + "', getdate(), '" + fn + "'),('" + user + "', '" + senderid13 + "', getdate(), '" + fn + "'),('" + user + "', '" + senderid14 + "', getdate(),('" + user + "', '" + senderid15 + "', getdate(), '" + fn + "'), ('" + user + "', '" + senderid16 + "', getdate(), '" + fn + "')";
+        //    database.ExecuteNonQuery(sql);
+        //}
+
+        #endregion
+
+        public void SaveTemplateRequest(string user, string msg, string fn, string tempname, string tempid, bool isNewTemplate = false)
+        {
+            if (isNewTemplate)
+            {
+                string sql = @"insert into templaterequest (username,template,createdat,filepath,tempname,templateid,allotted)
+            values('" + user + "', N'" + msg.Replace("'", "''") + "', getdate(), '" + fn + "','" + tempname + "','" + tempid + "',1)";
+                database.ExecuteNonQuery(sql);
+            }
+            else
+            {
+                string sql = @"insert into templaterequest (username,template,createdat,filepath,tempname,templateid)
+            values('" + user + "', N'" + msg.Replace("'", "''") + "', getdate(), '" + fn + "','" + tempname + "','" + tempid + "')";
+                database.ExecuteNonQuery(sql);
+            }
+
+        }
+        public DataTable GetTemplateList(string usernm)
+        {
+            DataTable dt = new DataTable("dt");
+            string sql = @"select templateId,tempname,template from templaterequest where username = '" + usernm + "' and isnull(allotted,0)=1 order by createdat desc";
+            dt = database.GetDataTable(sql);
+            return dt;
+        }
+
+        public DataSet ValidateTemplateRequest(string tempId, string templateName, string user)
+        {
+            string sql = string.Format("Select Count(templateid) [TemplateId] from templaterequest where username='{0}' AND templateid='{1}' ;", user, tempId);
+            string sql1 = string.Format("Select Count(tempname) [TemplateName] from templaterequest where username='{0}' AND tempname='{1}' ;", user, templateName);
+            return database.GetDataSet(sql + sql1);
+        }
+
+        public DataTable ValidateTemplateIdforAPI(string tempId, string templateName, string senderId)
+        {
+            string sql = string.Format("Select Count(templateid) [TemplateId] from TemplateID where senderid='{0}' AND templateid='{1}' ;", senderId, tempId);
+            return database.GetDataTable(sql);
+        }
+        public int GetCountForSubmittedTemplate(string username, string senderId, string currentTime)
+        {
+            string sql = string.Format("Select Count(id) [Total] from msgsubmitted with(nolock) where senderid='{0}' AND profileid='{1}' AND insertDate>'{2}' ;", senderId, username, currentTime);
+            return Convert.ToInt32(database.GetScalarValue(sql));
+
+        }
+
+        public DataTable GetSApprovedTemplateOfUser(string usernm)
+        {
+            DataTable dt = new DataTable("dt");
+            //string sql = @"select  template,Concat(TemplateID ,' ' ,isnull(tempname,'')) TemplateID,TemplateID as onlyTemplateID from templaterequest where username = '" + usernm + "' and isnull(allotted,0)=1 and isnull(IsWhatsapp,0)=0";
+            string sql = @"select  templateID from RcsTemplateHeader where userid = '" + usernm + "' and active=1";
+            dt = database.GetDataTable(sql);
+            return dt;
+        }
+        public DataTable GetTemplateSMS(string usernm, string templatenm)
+        {
+            DataTable dt = new DataTable("dt");
+            string user = "tmp1_" + usernm;
+            string sql = @"Select Template,templateid from templaterequest where username = '" + usernm + "' and templateid = '" + templatenm + "'";
+            dt = database.GetDataTable(sql);
+            return dt;
+        }
+        public DataTable GetTemplateSMSfromID(string usernm, string templateID)
+        {
+            DataTable dt = new DataTable("dt");
+            // string user = "tmp1_" + usernm;
+            string sql = @"Select tr.Template,tr.templateid,tr.temptextwithvarsrno from emimpanel.dbo.templaterequest tr, MapSMSAcc ms where ms.RCSAccId = '" + usernm + "' and ms.smsaccid = tr.username and tr.templateid = '" + templateID + "'";
+            //string sql = @"Select Template,templateid,temptextwithvarsrno from emimpanel.dbo.templaterequest with(nolock) where username = '" + usernm + "' and templateid = '" + templateID + "'";
+            //string sql = @"Select rth.templateid,rtd.* from RcsTemplateHeader rth,RcsTemplateDetail rtd where rth.rcstype=rtd.rcstype and  rth.templateid='" + templateID + "' and rth.userid = '" + usernm + "'";
+            dt = database.GetDataTable(sql);
+            return dt;
+        }
+        public DataTable GetTemplateRCSfromID(string usernm, string templateID)
+        {
+            DataTable dt = new DataTable("dt");
+            string user = "tmp1_" + usernm;
+            // string sql = @"Select Template,templateid from templaterequest where username = '" + usernm + "' and templateid = '" + templateID + "'";
+            string sql = @"Select rth.templateid,rtd.* from RcsTemplateHeader rth,RcsTemplateDetail rtd where rth.templateid=rtd.templateid and  rth.templateid='" + templateID + "' and rth.userid = '" + usernm + "' and rth.active=1";
+            dt = database.GetDataTable(sql);
+            return dt;
+        }
+        public DataTable GetFieldsOfUserUploadedXLS(string usernm)
+        {
+            DataTable dt = new DataTable("dt");
+            string user = "tmp1_" + usernm;
+            string sql = @"select column_name From information_schema.columns where table_name = '" + user + @"' ";
+            dt = database.GetDataTable(sql);
+            return dt;
+        }
+        public DataTable GetMaxLenFieldsOfUserUploadedXLS(string usernm, DataTable dtC)
+        {
+            string col = "";
+            //foreach (DataRow dr in dtC.Rows) col = col + " max(len([" + dr[0].ToString() + "])) as [" + dr[0].ToString() + "],";
+            foreach (DataRow dr in dtC.Rows) col = col + " max(Datalength([" + dr[0].ToString() + "])/2) as [" + dr[0].ToString() + "],";
+            if (col != "") col = col.Substring(0, col.Length - 1);
+            DataTable dt = new DataTable("dt");
+            string user = "tmp1_" + usernm;
+            string sql = @"select " + col + " From " + user;
+            dt = database.GetDataTable(sql);
+            return dt;
+        }
+        public DataTable GetTopRecordOfUserUploadedXLS(string usernm)
+        {
+            DataTable dt = new DataTable("dt");
+            string user = "tmp1_" + usernm;
+            string colnm = Convert.ToString(database.GetScalarValue("select column_name From information_schema.columns where table_name = '" + user + @"' and ordinal_position = 1 "));
+            string sql = string.Format("select top 1 * from {0} Where [{1}] IS NOT NULL", user, colnm);
+            dt = database.GetDataTable(sql);
+            return dt;
+        }
+
+        public DataTable GetGroup(string user)
+        {
+            DataTable dt = new DataTable("dt");
+            string sql = @"select grpname from grouphead where userid= '" + user + "' order by grpname";
+            dt = database.GetDataTable(sql);
+            return dt;
+        }
+        public bool GroupExists4User(string user, string grp, string excludegrp)
+        {
+            int c = 0;
+            string sql = @"select count(*) from grouphead where userid= '" + user + "' and grpname='" + grp + "'";
+            if (excludegrp != "") sql = sql + " and grpname<>'" + excludegrp + "'";
+            c = Convert.ToUInt16(database.GetScalarValue(sql));
+            return (c > 0 ? true : false);
+        }
+        public void CreateGroup(string user, string grp)
+        {
+            string sql = @"insert into grouphead (userid,grpname) values ('" + user + "','" + grp + "')";
+            database.ExecuteNonQuery(sql);
+        }
+        public void UpdateGroup(string user, string grp, string oldgrp)
+        {
+            string sql = @"update grouphead set grpname='" + grp + "' where userid='" + user + "' and grpname='" + oldgrp + "'";
+            database.ExecuteNonQuery(sql);
+        }
+
+        public void AddMobileInGroup(List<string> mobList, string cc, string user, string grp, bool isUpload)
+        {
+            string id = Convert.ToString(database.GetScalarValue("Select ID from grouphead where userid='" + user + "' and grpname='" + grp + "'"));
+            if (isUpload)
+            {
+                try
+                {
+                    string user1 = "tmp_" + user;
+                    string colnm = Convert.ToString(database.GetScalarValue("if exists (select * from sys.tables where name='" + user1 + @"') select column_name From information_schema.columns where table_name = '" + user1 + @"' and ordinal_position = 1 else select '' "));
+                    string sql = string.Format("Insert into groupdtl (id,mob) Select '{0}' as ID,[" + colnm + "] From {1} ", id, user1);
+                    database.ExecuteNonQuery(sql);
+                }
+                catch (Exception ex) { }
+            }
+            else
+            {
+                foreach (var m in mobList)
+                {
+                    string num = m;
+                    try
+                    {
+                        database.ExecuteNonQuery("Insert into groupdtl (id,mob) values ('" + id + "','" + num + "') ");
+                    }
+                    catch (Exception ex) { }
+                }
+            }
+        }
+        public DataTable GetMobileNumbersOfGroup(string user, string grp)
+        {
+            DataTable dt = new DataTable("dt");
+            string sql = @"select h.GrpName as [Group], d.mob as Mobile_Number from grouphead h inner join groupdtl d on h.id=d.id where h.userid= '" + user + "' and h.grpname='" + grp + "'";
+            dt = database.GetDataTable(sql);
+            return dt;
+        }
+
+        public void UpdateCustomer(string User, string Senderid, string Website, bool dnd)
+        {
+            string sql = @"update customer set senderid='" + Senderid + "',website= '" + Website + "',PERMISSION='" + (dnd ? "1" : "2") + "' where username='" + User + "'";
+            database.ExecuteNonQuery(sql);
+        }
+        //
+        //Convert.ToString(database.GetScalarValue("if exists (select * from sys.tables where name='" + user + @"') select column_name From information_schema.columns where table_name = '" + user + @"' and ordinal_position = 1 else select '' "));
+
+        //svh ------------->
+
+        public bool TestSmsbeforeSend(string profileid, string templateId, string msg, string senderId, string peid)
+        {
+            string _response = SendSMSthroughAPI(profileid, templateId, msg, senderId, peid);
+            if (_response != "")
+            {
+                List<string> liMessageId = new List<string>();
+                if (_response.Contains("Message ID:"))
+                {
+                    int freq = Regex.Matches(_response, ":").Count;
+                    if (freq == 1)
+                    {
+                        liMessageId.Add(_response.Split(':')[1].Trim().Replace(@"\", "").Replace('"', ' ').Trim());
+                    }
+                    else
+                    {
+                        // string getResponseTxt = "SMS Submitted Successfully.MobileNo: 9773937533 Message ID: S21810447121147427436539144, MobileNo: 9870333974 Message ID: S218104471211474211728639145";
+                        string[] arr = _response.Split(',');
+                        foreach (string mid in arr)
+                        {
+                            liMessageId.Add(mid.Split(':')[2].Trim().Replace(@"\", "").Replace('"', ' ').Trim());
+                        }
+                    }
+
+                    System.Threading.Thread.Sleep(10000);//wait 10 second
+                    foreach (string msgId in liMessageId)
+                    {
+                        string errorCode = Convert.ToString(database.GetScalarValue(string.Format("select err_code from delivery where msgid ='{0}'", msgId)));
+                        int tempErrorCode = Convert.ToInt16(database.GetScalarValue(string.Format("select Count(err_code) from errorcodeTemplate where err_code ='{0}'", errorCode)));
+
+                        if (tempErrorCode > 0)
+                        {
+                            Helper.Global.templateErrorCode = errorCode;
+                            return false;
+                        }
+                    }
+
+                }
+            }
+
+            return true;
+
+        }
+
+        public string SendSMSthroughAPI(string profileid, string templateId, string msg, string senderId, string peid)
+        {
+            msg = HttpUtility.UrlEncode(msg);
+
+            // msg = msg.Replace("%", "%25").Replace("#", "%23").Replace("&", "%26").Replace("+", "%2B");
+
+            DataTable dt = database.GetDataTable("Select * from SMSCheckSetting where profileid='" + profileid + "'");
+            if (dt.Rows.Count > 0)
+            {
+                string _userid = "MIM2000002";
+
+                string sql = "IF NOT EXISTS (SELECT * FROM SENDERIDMAST WHERE senderid = '" + senderId + "' AND userid='" + _userid + "')" +
+                  " INSERT INTO SENDERIDMAST(userid,senderid) values('" + _userid + "','" + senderId + "')";
+
+                database.ExecuteNonQuery(sql);
+                string pwd = Convert.ToString(database.GetScalarValue("select pwd from CUSTOMER where username='" + _userid + "'"));
+                DataRow dr = dt.Rows[0];
+                string mob = Convert.ToString(dr["mob1"]) + "," + Convert.ToString(dr["mob2"]) + "," + Convert.ToString(dr["mob3"]) + "," + Convert.ToString(dr["mob4"]) + "," + Convert.ToString(dr["mob5"]);
+                mob = mob.TrimEnd(',');
+                string url = "https://myinboxmedia.in/api/mim/SendSMS?userid=" + _userid + "&pwd=" + pwd + "&mobile=" + mob + "&sender=" + senderId + "&msg=" + msg + "&msgtype=13&peid=" + peid + "&templateid=" + templateId;
+                string getResponseTxt = "";
+                string getStatus = "";
+                WinHttp.WinHttpRequest objWinRq;
+                objWinRq = new WinHttp.WinHttpRequest();
+                try
+                {
+                    objWinRq.Open("GET", url, false);
+                    objWinRq.SetTimeouts(30000, 30000, 30000, 30000);
+                    objWinRq.Send(null);
+
+                    while (!(getStatus != "" && getResponseTxt != ""))
+                    {
+                        getStatus = objWinRq.Status + objWinRq.StatusText;
+                        getResponseTxt = objWinRq.ResponseText;
+
+                    }
+                    return getResponseTxt;
+                    //getResponseTxt = "[" + getResponseTxt + "]";
+                }
+                catch (Exception EX)
+                {
+                    throw EX;
+                }
+            }
+            return "";
+        }
+
+
+        public void SendSVH_OTP(string mob, string name, string client, string email = "", string ccode = "", string dealer = "")
+        {
+            string sql = "select count(*) from svhotp where mob ='" + mob + "' and isnull(client,'')='" + client + "' ";
+            int cnt = Convert.ToInt16(database.GetScalarValue(sql));
+            Int64 rnd = 0;
+            string msg = "";
+            if (cnt == 0)
+            {
+                string acode = Convert.ToString(database.GetScalarValue("select TOP 1 A.acode from agentmast A LEFT JOIN SVHOTP S ON S.DealerCode = A.DealerCode AND S.acode = A.ACode AND S.client='" + client + "' where A.DealerCode = '" + dealer + "' GROUP BY A.ACode ORDER BY COUNT(A.ACODE)"));
+                rnd = (new Random()).Next(1, 99999);
+                sql = " Insert into svhotp (fullname, mob, otp, client,email,countrycode,dealercode,acode) values ('" + name + "','" + mob + "','" + rnd.ToString() + "','" + client + "','" + email + "','" + ccode + "','" + dealer + "','" + acode + "')";
+                database.ExecuteNonQuery(sql);
+                DataTable dtA = database.GetDataTable("Select * from agentmast where acode='" + acode + "' and dealercode='" + dealer + "'");
+                if (dtA.Rows.Count > 0)
+                {
+                    if (ccode == "91")
+                    {
+                        msg = "Prospect for EMAAR - Name- " + name + " Mobile- " + ccode + " " + mob + " email- " + email;
+                        SendSMSthroughAPI(dtA.Rows[0]["Amob1"].ToString(), msg, client);
+                    }
+                    else
+                    {
+                        //msg = "Hello!+Your+One+Time+Password+is+" + rnd.ToString() + "+.+Kindly+fill+to+process+your+request.";
+                        msg = "Prospect+for+EMAAR+-+Name-+" + name + "+Mobile-++" + ccode + "+" + mob + "+email-+" + email;
+                        SendSMSthroughAPICountrycode(dtA.Rows[0]["Amob1"].ToString(), msg, dtA.Rows[0]["countrycode"].ToString(), "");
+                    }
+                }
+            }
+            else
+            {
+                sql = "select top 1 otp from svhotp where mob ='" + mob + "' and isnull(client,'')='" + client + "' ";
+                rnd = Convert.ToInt64(database.GetScalarValue(sql));
+            }
+
+            string clientNm = GetClientName(client, 1);
+
+            msg = "Dear " + name + ", " + rnd.ToString() + " is OTP for your mobile number verification for " + clientNm;
+
+
+            if (clientNm == "EMAAR")
+            {
+
+                if (ccode == "91")
+                {
+                    msg = "Your SMS verification code is:" + rnd.ToString();
+                    SendSMSthroughAPI(mob, msg, client);
+                }
+                else
+                {
+                    msg = "Hello!+Your+One+Time+Password+is+" + rnd.ToString() + "+.+Kindly+fill+to+process+your+request.";
+                    SendSMSthroughAPICountrycode(mob, msg, ccode);
+                }
+            }
+            else
+            {
+                SendSMSthroughAPI(mob, msg, client);
+            }
+            #region <commented >
+            // sql = @"INSERT INTO [dbo].[MSGTRAN]
+            //([PROVIDER]
+            //,[SMPPACCOUNTID]
+            //,[PROFILEID]
+            //,[MSGTEXT]
+            //,[TOMOBILE]
+            //,[SENDERID]
+            //,[CREATEDAT]
+            //,[PICKED_DATETIME],[PEID],[DataCode])
+            // VALUES
+            //(
+            //'VCON', '301'
+            //, '" + USER + @"'
+            //, '" + msg + @"'
+            //, '" + mob + @"'
+            //, '" + s + @"'
+            //, GETDATE()
+            //, NULL,'" + peid + "','Default')";
+            // Helper.dbmain.ExecuteNonQuery(sql);
+            #endregion
+
+        }
+        public void SendSMSthroughAPI(string mob, string msg, string client)
+        {
+            string clientID = "";
+            if (client.ToUpper() == "MIM2000002")
+                clientID = client;
+            else
+                clientID = GetClientName(client, 2);
+            DataTable dt = GetUserParameter(clientID);
+
+
+
+            DataRow dr = dt.Rows[0];
+            string countryCode = Convert.ToString(dt.Rows[0]["defaultCountry"]);
+            //string apikey = ob.getIPapikey();
+            string url = "";
+            if (countryCode != "91")
+                url = "https://myinboxmedia.in/api/mim/SendSMS?userid=" + dr["username"].ToString() + "&pwd=" + dr["pwd"].ToString() + "&mobile=" + mob + "&sender=" + dr["senderid"].ToString() + "&msg=" + msg + "&msgtype=16";
+            else
+                url = "https://myinboxmedia.in/api/mim/SendSMS?userid=" + dr["username"].ToString() + "&pwd=" + dr["pwd"].ToString() + "&mobile=" + mob + "&sender=" + dr["senderid"].ToString() + "&msg=" + msg + "&msgtype=13&peid=" + dr["PEID"].ToString();
+            string getResponseTxt = "";
+            string getStatus = "";
+            WinHttp.WinHttpRequest objWinRq;
+            objWinRq = new WinHttp.WinHttpRequest();
+            try
+            {
+                objWinRq.Open("GET", url, false);
+                objWinRq.SetTimeouts(30000, 30000, 30000, 30000);
+                objWinRq.Send(null);
+
+                while (!(getStatus != "" && getResponseTxt != ""))
+                {
+                    getStatus = objWinRq.Status + objWinRq.StatusText;
+                    getResponseTxt = objWinRq.ResponseText;
+                }
+                getResponseTxt = "[" + getResponseTxt + "]";
+            }
+            catch (Exception EX)
+            {
+                throw EX;
+            }
+        }
+
+        public void SendSMSthroughAPI_forOTP(string mob, string msg, string client)
+        {
+
+            DataTable dt = GetUserParameter(client);
+
+
+
+            DataRow dr = dt.Rows[0];
+            string countryCode = Convert.ToString(dt.Rows[0]["defaultCountry"]);
+            //string apikey = ob.getIPapikey();
+            string url = "";
+            if (countryCode != "91")
+                url = "https://myinboxmedia.in/api/mim/SendSMS?userid=" + dr["username"].ToString() + "&pwd=" + dr["pwd"].ToString() + "&mobile=" + mob + "&sender=" + dr["senderid"].ToString() + "&msg=" + msg + "&msgtype=16";
+            else
+                url = "https://myinboxmedia.in/api/mim/SendSMS?userid=" + dr["username"].ToString() + "&pwd=" + dr["pwd"].ToString() + "&mobile=" + mob + "&sender=" + dr["senderid"].ToString() + "&msg=" + msg + "&msgtype=13&peid=" + dr["PEID"].ToString();
+            string getResponseTxt = "";
+            string getStatus = "";
+            WinHttp.WinHttpRequest objWinRq;
+            objWinRq = new WinHttp.WinHttpRequest();
+            try
+            {
+                objWinRq.Open("GET", url, false);
+                objWinRq.SetTimeouts(30000, 30000, 30000, 30000);
+                objWinRq.Send(null);
+
+                while (!(getStatus != "" && getResponseTxt != ""))
+                {
+                    getStatus = objWinRq.Status + objWinRq.StatusText;
+                    getResponseTxt = objWinRq.ResponseText;
+                }
+                getResponseTxt = "[" + getResponseTxt + "]";
+            }
+            catch (Exception EX)
+            {
+                throw EX;
+            }
+        }
+
+        public void SendSMSthroughAPICountrycode(string mob, string msg, string countrycode, string executivesms = "")
+        {
+            //countrycode = "91";
+            //string clientID = GetClientName(client, 2);
+
+            string sqlCC = "select * from clientlogin where userid = 'emaar1'";
+            DataTable dt = database.GetDataTable(sqlCC);
+            string sender = Convert.ToString(dt.Rows[0]["SENDERID"]);
+            if (executivesms == "Y") sender = Convert.ToString(dt.Rows[0]["EXECUTIVE_SENDERID"]);
+            // string ccCode = Convert.ToString(dt.Rows[0]["COUNTRYCODE"]);
+            //if (countrycode == "44")
+            //    sender = "PREMIUM";
+            //else if (countrycode == "971")
+            //    sender = "MYINBXMEDIA";
+            //   if (ccCode == "") ccCode = countrycode;
+            //DataTable dt = GetUserParameter(clientID);
+            //DataRow dr = dt.Rows[0];;
+            //string apikey = ob.getIPapikey();
+            if (countrycode == "971")
+            {
+                if (executivesms != "Y") msg = msg + "+OPTOUT+7726";
+            }
+
+            if (mob.StartsWith("+"))
+            {
+                mob.Replace("+", "");
+                mob = mob.Substring(countrycode.Length + 1);
+            }
+            //string url = "http://bulksmsindia.mobi/sendurlcomma.aspx?user=20095087&pwd=Vip@123456&senderid=" + sender + "&CountryCode=" + countrycode + "&mobileno=" + mob + "&msgtext=" + msg + "&smstype=0/4/3";
+            //string s1 = "http://bulksmsindia.mobi/sendurlcomma.aspx?user=20095087&pwd=Vip@123456&senderid=PREMIUM&CountryCode=44&mobileno=7961526996&msgtext=test&smstype=0/4/3";
+
+            string url = "https://mshastra.com/sendurl.aspx?user=20095087&pwd=Vip@123456&senderid=" + sender + "&mobileno=" + mob + "&msgtext=" + msg + "&CountryCode=+" + countrycode;
+
+            // string url = "https://myinboxmedia.in/api/mim/SendSMS?userid=" + dr["username"].ToString() + "&pwd=" + dr["pwd"].ToString() + "&mobile=" + mob + "&sender=" + dr["senderid"].ToString() + "&msg=" + msg + "&msgtype=13&peid=" + dr["PEID"].ToString();
+            string getResponseTxt = "";
+            string getStatus = "";
+            WinHttp.WinHttpRequest objWinRq;
+            objWinRq = new WinHttp.WinHttpRequest();
+            try
+            {
+                objWinRq.Open("GET", url, false);
+                objWinRq.SetTimeouts(30000, 30000, 30000, 30000);
+                objWinRq.Send(null);
+
+                while (!(getStatus != "" && getResponseTxt != ""))
+                {
+                    getStatus = objWinRq.Status + objWinRq.StatusText;
+                    getResponseTxt = objWinRq.ResponseText;
+                }
+                getResponseTxt = "[" + getResponseTxt + "]";
+            }
+            catch (Exception EX)
+            {
+                throw EX;
+            }
+        }
+        public void ResendOldOTP(string client, string mob, string name, string ccode = "")
+        {
+            string sql = "select top 1 otp from svhotp where right(mob," + mob.Length + ") ='" + mob + "' and isnull(client,'')='" + client + "' ";
+            var otp = database.GetScalarValue(sql);
+            string rnd = Convert.ToString(otp);
+            if (!string.IsNullOrEmpty(rnd))
+            {
+                string clientNm = GetClientName(client, 1);
+
+                string msg = "Dear " + name + ", " + rnd.ToString() + " is OTP for your mobile number verification for " + clientNm;
+
+                if (clientNm == "EMAAR")
+                {
+                    if (ccode == "91")
+                    {
+                        msg = "Your SMS verification code is:" + rnd.ToString();
+                        SendSMSthroughAPI(mob, msg, client);
+                    }
+                    else
+                    {
+                        msg = "Hello! Your One Time Password is " + rnd.ToString() + " . Kindly fill to process your request.";
+                        SendSMSthroughAPICountrycode(mob, msg, ccode);
+                    }
+                }
+                else
+                {
+                    SendSMSthroughAPI(mob, msg, client);
+                }
+            }
+        }
+
+        public bool SVHSubmit(string name, string mob, string otp, string client, string ccode = "", string dealer = "")
+        {
+            string sql = "select count(*) from svhotp where right(mob," + mob.Length + ") ='" + mob + "' and otp = '" + otp + "' and isnull(client,'')='" + client + "'";
+            int cnt = Convert.ToInt16(database.GetScalarValue(sql));
+            if (cnt == 0) return false;
+            else
+            {
+                sql = "select count(*) from svhotp where right(mob," + mob.Length + ") ='" + mob + "' and otp = '" + otp + "' and isnull(client,'')='" + client + "' and verifiedon is null";
+                int cn = Convert.ToInt16(database.GetScalarValue(sql));
+                if (cn == 1)
+                {
+                    string sqlCC = string.Format("select * from clientlogin where userid ='{0}'", client);
+                    DataTable dt = database.GetDataTable(sqlCC);
+                    database.ExecuteNonQuery("Update svhotp set verifiedon=getdate() where right(mob," + mob.Length + ") ='" + mob + "' and otp = '" + otp + "' and isnull(client,'')='" + client + "'");
+                    string clientNm = GetClientName(client, 1);
+                    string cc = GetClientName(client, 3);
+                    // string Shapoor_pwd = "i6;J8K._(DWu";
+                    // password default  "IP#396395"                    
+                    string mailmsg = clientNm + " Registration. Name : " + name + ". Mobile: +" + ccode + " " + mob;
+                    string re = "";
+                    if (clientNm == "EMAAR")
+                    {
+                        re = SendEmailSVH(Convert.ToString(dt.Rows[0]["ToEmail"]), clientNm + " Registration", mailmsg, "noreply@textiyapa.com", "IP#396395", "smtpout.secureserver.net", Convert.ToString(dt.Rows[0]["CCEmail"]));
+                        //971
+                        //SendSMSthroughAPICountrycode(Convert.ToString(dt.Rows[0]["Mob"]), mailmsg, ccode);
+                    }
+                    else if (clientNm == "SHAPOORJI_BANDRA")
+                        re = SendEmailSVH("singh.prashant2608@gmail.com", clientNm + " Registration", mailmsg, "noreply@textiyapa.com", "IP#396395", "smtpout.secureserver.net", cc);
+                    else if (clientNm == "SHAPOORJI")
+                        re = SendEmailSVH("vipin@myinboxmedia.com", clientNm + " Registration", mailmsg, "noreply@textiyapa.com", "IP#396395", "smtpout.secureserver.net", "BISHNU.PUROHIT@shapoorji.com");
+                    else if (clientNm == "360EDGE")
+                        re = SendEmailSVH("avinash.verma@360realtors.com", clientNm + " Registration", mailmsg, "noreply@textiyapa.com", "IP#396395", "smtpout.secureserver.net", cc);
+                    else
+                        re = SendEmailSVH("vipin@myinboxmedia.com", clientNm + " Registration", mailmsg, "noreply@textiyapa.com", "IP#396395", "smtpout.secureserver.net", cc);
+
+
+                }
+                return true;
+            }
+        }
+        public string GetClientName(string client, int type)
+        {
+            string clientNm = "";
+            string clientID = "";
+            string cc = "";
+            if (client == "goldenbricks") { clientNm = "Golden Bricks"; clientID = "MIM2002171"; cc = "libin.goldenbricks@gmail.com"; }
+            if (client == "drio") { clientNm = "DRIO"; clientID = "MIM2002176"; cc = ""; }
+            if (client == "sgm") { clientNm = "SGM GROUP"; clientID = "MIM2002114"; cc = ""; }
+            if (client == "birla") { clientNm = "BIRLA"; clientID = "MIM2000025"; cc = ""; }
+            if (client == "mapsko") { clientNm = "MAPSKO"; clientID = "MIM2002173"; cc = ""; }
+            //add client here for test
+            if (client == "MIM") { clientNm = "MyInboxMedia"; clientID = "MIM2000002"; cc = ""; }
+            if (client == "Shapoorji") { clientNm = "SHAPOORJI"; clientID = "MIM2101267"; cc = ""; }
+            if (client == "Shapoorji_bandra") { clientNm = "SHAPOORJI_BANDRA"; clientID = "MIM2101267"; cc = ""; }
+            if (client == "360Edge") { clientNm = "360EDGE"; clientID = "MIM2101278"; cc = ""; }
+            if (client == "emaar") { clientNm = "EMAAR"; clientID = "MIM2100015"; cc = ""; }
+            if (client == "emaar2") { clientNm = "EMAAR"; clientID = "MIM2100015"; cc = ""; }
+            if (client == "emaar1") { clientNm = "EMAAR"; clientID = "MIM2100015"; cc = ""; }
+            if (client == "emaar_ruba") { clientNm = "EMAAR"; clientID = "MIM2100015"; cc = ""; }
+
+            return (type == 1 ? clientNm : (type == 2 ? clientID : cc));
+        }
+        public string SendEmailSVH(string toAddress, string subject, string body, string MailFrom, string Pwd, string Host, string cc)
+        {
+            string result = "Message Sent Successfully..!!";
+            string senderID = MailFrom; // "info@emim.in";
+            string senderPassword = Pwd; // "info";
+            try
+            {
+                body = "Hello This is test email for Notification !!";
+                //Host = "mymail2889.com",
+
+                SmtpClient smtp = new SmtpClient
+                {
+                    Host = Host,
+                    Port = 25,
+                    DeliveryMethod = SmtpDeliveryMethod.Network,
+                    Credentials = new System.Net.NetworkCredential(senderID, senderPassword),
+                    Timeout = 30000,
+                };
+
+                MailMessage message = new MailMessage(senderID, toAddress, subject, body);
+                //message.CC.Add("software.in2010@gmail.com");
+                //message.CC.Add("manojramavtar@gmail.com");
+                if (cc != "")
+                    message.CC.Add(cc);
+                else
+                    //360 edge client
+                    //if (toAddress == "avinash.verma@360realtors.com" || toAddress == "akshel.kuruvilla@shapoorji.com")
+                    message.CC.Add("vipin@myinboxmedia.com");
+
+                //message.CC.Add("vikas.walia@myinboxmedia.com");
+                message.Bcc.Add("anirudh@myinboxmedia.com");
+                message.Bcc.Add("dilip@myinboxmedia.com");
+                //Attachment item = new Attachment(fn);
+                //message.Attachments.Add(item);
+                //smtp.EnableSsl = false;
+                //smtp.UseDefaultCredentials = false;
+                smtp.Send(message);
+            }
+            catch (Exception ex)
+            {
+                result = "Error sending email.!!! " + ex.Message;
+                //ErrLog("error on sending email - " + ex.Message + " -- " + ex.StackTrace);
+            }
+            return result;
+        }
+
+        //svh <-------------
+        public DataTable GetdrcrLogReport(string user, string f, string t)
+        {
+            DataTable dt = new DataTable("dt");
+            string str = @"select * from userBalCrDr where username='" + user + "' ";
+            if (f != "" && t != "")
+                str = str + @" and trandate between '" + f + "' and '" + t + "'  ";
+            dt = database.GetDataTable(str);
+            return dt;
+        }
+        public DataTable GetScheduleLogReport(string user, string f, string t)
+        {
+            DataTable dt = new DataTable("dt");
+
+            string sql = @"select DATEADD(MINUTE," + Helper.Global.addMinutes + @",convert(varchar,Schedule,106) + ' ' + convert(varchar(5),schedule,108)) as Schedule, count(*) as mobiles,isnull(fileid,0) as fileid,smsrate,
+case when  len(msgtext) + (len(msgtext) - len(replace(msgtext,'|',''))) + (len(msgtext) - len(replace(msgtext,'~',''))) <= 160 then 1 else
+case when  len(msgtext) + (len(msgtext) - len(replace(msgtext,'|',''))) + (len(msgtext) - len(replace(msgtext,'~',''))) <= 306 then 2 else
+case when  len(msgtext) + (len(msgtext) - len(replace(msgtext,'|',''))) + (len(msgtext) - len(replace(msgtext,'~',''))) <= 459 then 3 else
+case when  len(msgtext) + (len(msgtext) - len(replace(msgtext,'|',''))) + (len(msgtext) - len(replace(msgtext,'~',''))) <= 612 then 4 else
+case when  len(msgtext) + (len(msgtext) - len(replace(msgtext,'|',''))) + (len(msgtext) - len(replace(msgtext,'~',''))) <= 765 then 5 else
+case when  len(msgtext) + (len(msgtext) - len(replace(msgtext,'|',''))) + (len(msgtext) - len(replace(msgtext,'~',''))) <= 918 then 6 else 7 end end end end end end 
+as noofsms from msgschedule where profileid='" + user + "' and schedule between '" + f + "' and DateAdd(MINUTE," + Math.Abs(Helper.Global.addMinutes) + @",'" + t + @"') and picked_datetime is null 
+group by DATEADD(MINUTE," + Helper.Global.addMinutes + @",convert(varchar,Schedule,106) + ' ' + convert(varchar(5),schedule,108)),isnull(fileid,0),smsrate,len(msgtext) + (len(msgtext) - len(replace(msgtext,'|',''))) + (len(msgtext) - len(replace(msgtext,'~',''))) order by Schedule";
+            dt = Helper.dbmain.GetDataTable(sql);
+            return dt;
+        }
+        public DataTable GetMobileNumbersOfSchedule(string user, string sch)
+        {
+            DataTable dt = new DataTable("dt");
+            string sql = @"select tomobile,msgtext, DATEADD(MINUTE," + Helper.Global.addMinutes + @",convert(varchar,Schedule,106) + ' ' + convert(varchar(5),schedule,108)) as schedule from msgschedule where profileid='" + user + "' and schedule=DateAdd(MINUTE, " + Math.Abs(Helper.Global.addMinutes) + " ,'" + sch + "') ";
+            dt = Helper.dbmain.GetDataTable(sql);
+            return dt;
+        }
+
+        public Int64 GetNoOfMobiles4FileID(string user, string fileid, string schdt)
+        {
+            string sql = @"select count(*) from msgschedule where profileid='" + user + "' and schedule=DateAdd(MINUTE, " + Math.Abs(Helper.Global.addMinutes) + " ,'" + schdt + "') and picked_datetime is null and isnull(fileid,0) = '" + fileid + "'";
+            return Convert.ToInt64(Helper.dbmain.GetScalarValue(sql));
+        }
+        public void RemoveFromSchedule(string user, string fileid, string schdt)
+        {
+            string sql = @"delete from msgschedule where profileid='" + user + "' and schedule=DateAdd(MINUTE, " + Math.Abs(Helper.Global.addMinutes) + " ,'" + schdt + "') and picked_datetime is null and isnull(fileid,0) = '" + fileid + "'";
+            Helper.dbmain.ExecuteNonQuery(sql);
+        }
+
+        public DataSet GetCampaignWiseDataOld(string user, string f, string t, string camp)
+        {
+
+            DataSet ds = new DataSet("ds");
+            string sql = "";
+            sql = @";with ReportCTE as ( select f.UPLOADTIME as requestdate,f.FILENM, f.campaignname as campaign ,f.senderid as sender,left(s.smsTEXT,30) as message,
+count(s.id) * isnull(f.smsrate,0) as credit,count(s.id) as smscount,
+sum(case when isnull(d.dlvrstatus, '') = 'Delivered' then 1 else 0 end) as delivered,
+sum(case when isnull(d.dlvrstatus, '') <> 'Delivered' AND d.dlvrstatus IS NOT NULL then 1 else 0 end) as failed
+,sum(case when d.dlvrstatus IS NULL then 1 else 0 end) as AWAITED,
+sum(case when ms.SHORTURL_ID is null then 0 else 1 end) AS openmsg
+from smsfileupload f with(nolock)
+inner join MSGSUBMITTED s with(nolock) on f.userid = s.profileid and f.id=s.fileid 
+left join delivery d with(nolock) on s.msgid = d.msgid 
+left join short_urls sh with(nolock) on sh.userid = f.userid and f.shortURLId = sh.id
+left join mobtrackurl m with(nolock) on sh.ID = m.urlid and m.mobile=s.TOMOBILE
+left join mobstats ms on sh.ID = ms.SHORTURL_ID and ms.urlid=m.id 
+where f.userid = '" + user + @"' and s.sentdatetime between '" + f + @"' and '" + t + @"' and f.campaignname is not null";
+            if (camp != "" && camp != "0") sql = sql + @" and f.campaignname = '" + camp + "' ";
+            sql = sql + @" group by f.UPLOADTIME,f.FILENM,f.campaignname,f.senderid,left(s.smsTEXT, 30),f.reccount,f.smsrate )
+            select RequestDate,FILENM,Campaign,sender,message,credit,smscount, convert(varchar,delivered) + '  (' + cast((delivered * 100/smscount) as varchar) + '% )' [delivered], 
+
+            convert(varchar,failed) + '  (' + cast((failed * 100/smscount) as varchar) + '% )' [failed],
+			 convert(varchar,AWAITED) + '  (' + cast((AWAITED * 100/smscount) as varchar) + '% )' [AWAITED],
+			convert(varchar,openmsg) + '  (' + cast((openmsg * 100/smscount) as varchar) + '% )' [openmsg]
+		from ReportCTE order by requestdate";
+
+            sql += @" ;with ReportCTE1 as ( select f.UPLOADTIME as requestdate,f.FILENM, f.campaignname as campaign ,f.senderid as sender,left(s.smsTEXT,30) as message,
+count(s.id) * isnull(f.smsrate,0) as credit,count(s.id) as smscount,
+sum(case when isnull(d.dlvrstatus, '') = 'Delivered' then 1 else 0 end) as delivered,
+sum(case when isnull(d.dlvrstatus, '') <> 'Delivered' AND d.dlvrstatus IS NOT NULL then 1 else 0 end) as failed
+,sum(case when d.dlvrstatus IS NULL then 1 else 0 end) as AWAITED,
+sum(case when ms.SHORTURL_ID is null then 0 else 1 end) AS openmsg
+from smsfileupload f with(nolock)
+inner join MSGSUBMITTED s with(nolock) on f.userid = s.profileid and f.id=s.fileid 
+left join delivery d with(nolock) on s.msgid = d.msgid 
+left join short_urls sh with(nolock) on sh.userid = f.userid and f.shortURLId = sh.id
+left join mobtrackurl m with(nolock) on sh.ID = m.urlid and m.mobile=s.TOMOBILE
+left join mobstats ms on sh.ID = ms.SHORTURL_ID and ms.urlid=m.id 
+where f.userid = '" + user + @"' and s.sentdatetime between '" + f + @"' and '" + t + @"' and f.campaignname is not null";
+            if (camp != "" && camp != "0") sql = sql + @" and f.campaignname = '" + camp + "' ";
+            sql = sql + @" group by f.UPLOADTIME,f.FILENM,f.campaignname,f.senderid,left(s.smsTEXT, 30),f.reccount,f.smsrate,s.fileid,s.createdat )
+            select requestdate,FILENM,campaign,sender,message,credit,smscount, convert(varchar,delivered) + '  (' + cast((delivered * 100/smscount) as varchar) + '% )' [delivered], 
+			convert(varchar,failed) + '  (' + cast((failed * 100/smscount) as varchar) + '% )' [failed],
+			 convert(varchar,AWAITED) + '  (' + cast((AWAITED * 100/smscount) as varchar) + '% )' [AWAITED],
+			convert(varchar,openmsg) + '  (' + cast((openmsg * 100/smscount) as varchar) + '% )' [openmsg]
+		from ReportCTE1 order by requestdate";
+
+
+            ds = database.GetDataSet(sql);
+            return ds;
+        }
+
+        public DataSet GetCampaignWiseData(string user, string f, string t, string camp)
+        {
+
+            DataSet ds = new DataSet("ds");
+            string sql = "";
+            sql = @"select mbs.shorturl_id,mbs.urlid into #tmp1 from mobstats mbs with(nolock) inner join short_urls su with(nolock) on mbs.shortUrl_id=su.id 
+where su.userid='" + user + @"' and mbs.click_date>='" + f + @"' group by mbs.shorturl_id,mbs.urlid 
+
+;with ReportCTE as ( select CONVERT(varchar(10),s.sentdatetime,105) as requestdate,f.FILENM, f.campaignname as campaign ,f.senderid as sender,left(s.smsTEXT,30) as message,
+Cast(round(count(s.id) * isnull(f.smsrate,0)/100,2) as decimal(10,2)) as credit,count(s.id) as smscount,
+sum(case when isnull(d.dlvrstatus, '') = 'Delivered' then 1 else 0 end) as delivered,
+sum(case when isnull(d.dlvrstatus, '') <> 'Delivered' AND d.dlvrstatus IS NOT NULL then 1 else 0 end) as failed
+,sum(case when d.dlvrstatus IS NULL then 1 else 0 end) as AWAITED,
+sum(case when ms.SHORTURL_ID is null then 0 else 1 end) AS openmsg
+from smsfileupload f with(nolock)
+inner join MSGSUBMITTED s with(nolock) on f.userid = s.profileid and f.id=s.fileid 
+left join delivery d with(nolock) on s.msgid = d.msgid 
+left join short_urls sh with(nolock) on sh.userid = f.userid and f.shortURLId = sh.id
+LEFT join mobtrackurl m with(nolock) on sh.ID = m.urlid and m.mobile=s.TOMOBILE AND CONVERT(VARCHAR,F.UPLOADTIME,102)<=CONVERT(VARCHAR,M.SENTDATE,102) AND M.SENTDATE>F.UPLOADTIME  
+left join #tmp1 ms on sh.ID = ms.SHORTURL_ID and ms.urlid=m.id
+where f.userid = '" + user + @"' and s.sentdatetime between '" + f + @"' and '" + t + @"' and isnull(f.campaignname,'')<>'' ";
+            if (camp != "" && camp != "0") sql = sql + @" and f.campaignname = '" + camp + "' ";
+            sql = sql + @" group by CONVERT(varchar(10),s.sentdatetime,105),f.FILENM,f.campaignname,f.senderid,left(s.smsTEXT, 30),f.reccount,f.smsrate )
+            select RequestDate,FILENM,Campaign,sender,message,credit,smscount, delivered, (delivered * 100/smscount) [delivered_p], 
+            failed,  (failed * 100/smscount) [failed_p],
+			 AWAITED, (AWAITED * 100/smscount) [AWAITED_p],
+			openmsg,  (openmsg * 100/smscount) [openmsg_p]
+		from ReportCTE order by requestdate desc";
+
+
+
+
+            //
+            // AND m.fileid=s.fileid
+            //            sql += @" ;with ReportCTE1 as ( select convert(varchar,s.createdat,106) + ' ' + convert(varchar(5),s.createdat,108) as requestdate,f.FILENM, 
+            //f.campaignname as campaign ,f.senderid as sender,left(s.smsTEXT,30) as message,
+            //Cast(round(count(s.id) * isnull(f.smsrate,0)/100,2) as decimal(10,2)) as credit,count(s.id) as smscount,
+            //sum(case when isnull(d.dlvrstatus, '') = 'Delivered' then 1 else 0 end) as delivered,
+            //sum(case when isnull(d.dlvrstatus, '') <> 'Delivered' AND d.dlvrstatus IS NOT NULL then 1 else 0 end) as failed
+            //,sum(case when d.dlvrstatus IS NULL then 1 else 0 end) as AWAITED,
+            //sum(case when ms.SHORTURL_ID is null then 0 else 1 end) AS openmsg
+            //from smsfileupload f with(nolock)
+            //inner join MSGSUBMITTED s with(nolock) on f.userid = s.profileid and f.id=s.fileid 
+            //left join delivery d with(nolock) on s.msgid = d.msgid 
+            //left join short_urls sh with(nolock) on sh.userid = f.userid and f.shortURLId = sh.id
+            //LEFT join mobtrackurl m with(nolock) on sh.ID = m.urlid and m.mobile=s.TOMOBILE AND CONVERT(VARCHAR,F.UPLOADTIME,102)=CONVERT(VARCHAR,M.SENTDATE,102) AND M.SENTDATE>F.UPLOADTIME
+            //left join #tmp1 ms on sh.ID = ms.SHORTURL_ID and ms.urlid=m.id 
+            //where f.userid = '" + user + @"' and s.sentdatetime between '" + f + @"' and '" + t + @"' and isnull(f.campaignname,'')<>'' ";
+            //            if (camp != "" && camp != "0") sql = sql + @" and f.campaignname = '" + camp + "' ";
+            //            sql = sql + @" group by f.UPLOADTIME,f.FILENM,f.campaignname,f.senderid,left(s.smsTEXT, 30),f.reccount,f.smsrate,s.fileid,s.createdat )
+            //            select DATEADD(MINUTE," + Helper.Global.addMinutes + @",RequestDate) as RequestDate,FILENM,campaign,sender,message,credit,smscount,  delivered, (delivered * 100/smscount) [delivered_p], 
+            //            failed,  (failed * 100/smscount) [failed_p],
+            //			 AWAITED, (AWAITED * 100/smscount) [AWAITED_p],
+            //			openmsg,  (openmsg * 100/smscount) [openmsg_p]
+            //		from ReportCTE1 order by requestdate desc";
+
+            sql += @" ;with ReportCTE1 as ( select case when s1.schedule IS NULL then convert(varchar,s.SENTDATETIME,102) else s1.schedule end  as requestdate,f.FILENM, 
+f.campaignname as campaign ,f.senderid as sender,left(s.smsTEXT,30) as message,
+Cast(round(count(s.id) * isnull(f.smsrate,0)/100,2) as decimal(10,2)) as credit,count(s.id) as smscount,
+sum(case when isnull(d.dlvrstatus, '') = 'Delivered' then 1 else 0 end) as delivered,
+sum(case when isnull(d.dlvrstatus, '') <> 'Delivered' AND d.dlvrstatus IS NOT NULL then 1 else 0 end) as failed
+,sum(case when d.dlvrstatus IS NULL then 1 else 0 end) as AWAITED,
+sum(case when ms.SHORTURL_ID is null then 0 else 1 end) AS openmsg
+from smsfileupload f with(nolock)
+inner join MSGSUBMITTED s with(nolock) on f.userid = s.profileid and f.id=s.fileid 
+LEFT join MsgSchedule s1 with(nolock) on  s.TOMOBILE=s1.TOMOBILE and s.FILEID=s1.FILEID and convert(varchar,s1.schedule,102)=convert(varchar,s.sentdatetime,102)
+left join delivery d with(nolock) on s.msgid = d.msgid 
+left join short_urls sh with(nolock) on sh.userid = f.userid and f.shortURLId = sh.id
+LEFT join mobtrackurl m with(nolock) on sh.ID = m.urlid and m.mobile=s.TOMOBILE AND CONVERT(VARCHAR,F.UPLOADTIME,102)<=CONVERT(VARCHAR,M.SENTDATE,102) AND M.SENTDATE>F.UPLOADTIME 
+left join #tmp1 ms on sh.ID = ms.SHORTURL_ID and ms.urlid=m.id 
+where f.userid = '" + user + @"' and s.sentdatetime between '" + f + @"' and '" + t + @"' and isnull(f.campaignname,'')<>'' ";
+            if (camp != "" && camp != "0") sql = sql + @" and f.campaignname = '" + camp + "' ";
+            sql = sql + @" group by f.FILENM,f.campaignname,f.senderid,left(s.smsTEXT, 30),f.reccount,f.smsrate,s.fileid,
+            case when s1.schedule IS NULL then convert(varchar,s.SENTDATETIME,102) else s1.schedule end)
+            select DATEADD(MINUTE," + Helper.Global.addMinutes + @",RequestDate) as RequestDate,FILENM,campaign,sender,message,credit,smscount,  delivered, (delivered * 100/smscount) [delivered_p], 
+            failed,  (failed * 100/smscount) [failed_p],
+			 AWAITED, (AWAITED * 100/smscount) [AWAITED_p],
+			openmsg,  (openmsg * 100/smscount) [openmsg_p]
+		from ReportCTE1 order by requestdate desc";
+
+            ds = database.GetDataSet(sql);
+            return ds;
+        }
+
+        public DataSet GetCampaignWiseData_new(string user, string f, string t, string camp)
+        {
+
+            DataSet ds = new DataSet("ds");
+            string sql = "";
+            sql = @"select mbs.shorturl_id,mbs.urlid into #tmp1 from mobstats mbs with(nolock) inner join short_urls su with(nolock) on mbs.shortUrl_id=su.id 
+where su.userid='" + user + @"' and mbs.click_date>='" + f + @"' group by mbs.shorturl_id,mbs.urlid 
+
+select CONVERT(varchar(10),s.sentdatetime,105) as requestdate,cast(s.sentdatetime as date) ordDate,
+f.FILENM, f.campaignname as campaign ,f.senderid as sender,f.id,
+Cast(round(count(s.id) * isnull(f.smsrate,0)/100,2) as decimal(10,2)) as credit,count(s.id) as smscount
+,sum(case when isnull(d.dlvrstatus, '') = 'Delivered' then 1 else 0 end) as delivered
+,sum(case when isnull(d.dlvrstatus, '') <> 'Delivered' AND d.dlvrstatus IS NOT NULL then 1 else 0 end) as failed
+,sum(case when d.dlvrstatus IS NULL then 1 else 0 end) as AWAITED
+into #tmpDelv
+from smsfileupload f with(nolock)
+inner join MSGSUBMITTED s with(nolock) on f.id=s.fileid and f.userid = s.profileid
+left join delivery d with(nolock) on s.msgid = d.msgid 
+where f.userid = '" + user + @"' and s.sentdatetime between '" + f + @"' and '" + t + @"' and isnull(f.campaignname,'')<>'' ";
+            if (camp != "" && camp != "0") sql = sql + @" and f.campaignname = '" + camp + "' ";
+            sql = sql + @" group by CONVERT(varchar(10),s.sentdatetime,105),cast(s.sentdatetime as date)
+,f.FILENM,f.campaignname,f.senderid,
+f.reccount,f.smsrate ,f.id;
+
+select CONVERT(varchar(10),s.sentdatetime,105) as requestdate,
+f.FILENM, f.campaignname as campaign ,f.senderid as sender,f.id
+,sum(case when ms.SHORTURL_ID is null then 0 else 1 end) AS openmsg
+ into #tmpCamp 
+ from smsfileupload f with(nolock)
+ inner join MSGSUBMITTED s with(nolock) on f.id=s.fileid and f.userid = s.profileid 
+ left join short_urls sh with(nolock) on sh.userid = f.userid and f.shortURLId = sh.id
+ LEFT join mobtrackurl m with(nolock) on sh.ID = m.urlid and m.mobile=s.TOMOBILE AND F.ID=M.fileId 
+ left join #tmp1 ms on sh.ID = ms.SHORTURL_ID and ms.urlid=m.id
+where f.userid = '" + user + @"' and s.sentdatetime between '" + f + @"' and '" + t + @"' and isnull(f.campaignname,'')<>'' ";
+            if (camp != "" && camp != "0") sql = sql + @" and f.campaignname = '" + camp + "' ";
+            sql = sql + @"
+            group by CONVERT(varchar(10),s.sentdatetime,105)
+,f.FILENM,f.campaignname,f.senderid,
+f.reccount,f.smsrate ,f.id;
+
+select t.RequestDate,t.FILENM,t.Campaign,t.sender,credit,smscount,
+delivered, (delivered * 100/smscount) [delivered_p],
+failed,  (failed * 100/smscount) [failed_p],
+AWAITED, (AWAITED * 100/smscount) [AWAITED_p],
+openmsg,  (openmsg * 100/smscount) [openmsg_p]
+from #tmpDelv t INNER JOIN #tmpCamp c ON t.id =c.ID
+order by t.ordDate";
+
+            //sql += @" ;
+            //select t.RequestDate,t.FILENM,t.Campaign,t.sender,credit,smscount,
+            //delivered, (delivered * 100/smscount) [delivered_p],
+            //failed,  (failed * 100/smscount) [failed_p],
+            //AWAITED, (AWAITED * 100/smscount) [AWAITED_p],
+            //openmsg,  (openmsg * 100/smscount) [openmsg_p]
+            //from #tmpDelv t INNER JOIN #tmpCamp c ON t.id =c.ID
+            //order by t.ordDate";
+
+
+            ds = database.GetDataSet(sql);
+            return ds;
+        }
+
+        public DataTable GetCampaignWiseDataDownload(string user, string f, string t, string camp)
+        {
+
+            DataTable dt = new DataTable("dt");
+            string sql = "";
+            sql = @"select mbs.shorturl_id,mbs.urlid into #tmp1 from mobstats mbs with(nolock) inner join short_urls su with(nolock) on mbs.shortUrl_id=su.id 
+where su.userid='" + user + @"' and mbs.click_date>='" + f + @"' group by mbs.shorturl_id,mbs.urlid 
+
+;with ReportCTE as ( select CONVERT(varchar(10),s.sentdatetime,105) as requestdate,f.FILENM, f.campaignname as campaign ,f.senderid as sender,left(s.smsTEXT,30) as message,
+Cast(round(count(s.id) * isnull(f.smsrate,0)/100,2) as decimal(10,2)) as credit,count(s.id) as smscount,
+sum(case when isnull(d.dlvrstatus, '') = 'Delivered' then 1 else 0 end) as delivered,
+sum(case when isnull(d.dlvrstatus, '') <> 'Delivered' AND d.dlvrstatus IS NOT NULL then 1 else 0 end) as failed
+,sum(case when d.dlvrstatus IS NULL then 1 else 0 end) as AWAITED,
+sum(case when ms.SHORTURL_ID is null then 0 else 1 end) AS openmsg
+from smsfileupload f with(nolock)
+inner join MSGSUBMITTED s with(nolock) on f.userid = s.profileid and f.id=s.fileid 
+left join delivery d with(nolock) on s.msgid = d.msgid 
+left join short_urls sh with(nolock) on sh.userid = f.userid and f.shortURLId = sh.id
+LEFT join mobtrackurl m with(nolock) on sh.ID = m.urlid and m.mobile=s.TOMOBILE AND CONVERT(VARCHAR,F.UPLOADTIME,102)<=CONVERT(VARCHAR,M.SENTDATE,102) AND M.SENTDATE>F.UPLOADTIME  
+left join #tmp1 ms on sh.ID = ms.SHORTURL_ID and ms.urlid=m.id
+where f.userid = '" + user + @"' and s.sentdatetime between '" + f + @"' and '" + t + @"' and isnull(f.campaignname,'')<>'' ";
+            if (camp != "" && camp != "0") sql = sql + @" and f.campaignname = '" + camp + "' ";
+            sql = sql + @" group by CONVERT(varchar(10),s.sentdatetime,105),f.FILENM,f.campaignname,f.senderid,left(s.smsTEXT, 30),f.reccount,f.smsrate )
+            select RequestDate,FILENM,Campaign,sender,message,credit,smscount, delivered, (delivered * 100/smscount) [delivered_p], 
+            failed,  (failed * 100/smscount) [failed_p],
+			 AWAITED, (AWAITED * 100/smscount) [AWAITED_p],
+			openmsg,  (openmsg * 100/smscount) [openmsg_p]
+		from ReportCTE order by requestdate desc";
+
+            dt = database.GetDataTable(sql);
+            return dt;
+        }
+
+        //        public DataSet GetCampaignWiseData(string user, string f, string t, string camp)
+        //        {
+
+        //            DataSet ds = new DataSet("ds");
+        //            string sql = "";
+        //            sql = @"select mbs.shorturl_id,mbs.urlid into #tmp1 from mobstats mbs with(nolock) inner join short_urls su with(nolock) on mbs.shortUrl_id=su.id 
+        //where su.userid='" + user + @"' and mbs.click_date>='" + f + @"' group by mbs.shorturl_id,mbs.urlid 
+
+        //;with ReportCTE as ( select cast(s.sentdatetime as date) as requestdate,f.FILENM, f.campaignname as campaign ,f.senderid as sender,left(s.smsTEXT,30) as message,
+        //Cast(round(count(s.id) * isnull(f.smsrate,0)/100,2) as decimal(10,2)) as credit,count(s.id) as smscount,
+        //sum(case when isnull(d.dlvrstatus, '') = 'Delivered' then 1 else 0 end) as delivered,
+        //sum(case when isnull(d.dlvrstatus, '') <> 'Delivered' AND d.dlvrstatus IS NOT NULL then 1 else 0 end) as failed
+        //,sum(case when d.dlvrstatus IS NULL then 1 else 0 end) as AWAITED,
+        //sum(case when ms.SHORTURL_ID is null then 0 else 1 end) AS openmsg
+        //from smsfileupload f with(nolock)
+        //inner join MSGSUBMITTED s with(nolock) on f.userid = s.profileid and f.id=s.fileid 
+        //left join delivery d with(nolock) on s.msgid = d.msgid 
+        //left join short_urls sh with(nolock) on sh.userid = f.userid and f.shortURLId = sh.id
+        //LEFT join mobtrackurl m with(nolock) on sh.ID = m.urlid and m.mobile=s.TOMOBILE AND CONVERT(VARCHAR,F.UPLOADTIME,102)<=CONVERT(VARCHAR,M.SENTDATE,102) AND M.SENTDATE>F.UPLOADTIME  
+        //left join #tmp1 ms on sh.ID = ms.SHORTURL_ID and ms.urlid=m.id
+        //where f.userid = '" + user + @"' and s.sentdatetime between '" + f + @"' and '" + t + @"' and isnull(f.campaignname,'')<>'' ";
+        //            if (camp != "" && camp != "0") sql = sql + @" and f.campaignname = '" + camp + "' ";
+        //            sql = sql + @" group by cast(s.sentdatetime as date),f.FILENM,f.campaignname,f.senderid,left(s.smsTEXT, 30),f.reccount,f.smsrate )
+        //            select  RequestDate,FILENM,Campaign,sender,message,credit,smscount, delivered, (delivered * 100/smscount) [delivered_p], 
+        //            failed,  (failed * 100/smscount) [failed_p],
+        //			 AWAITED, (AWAITED * 100/smscount) [AWAITED_p],
+        //			openmsg,  (openmsg * 100/smscount) [openmsg_p]
+        //		from ReportCTE order by requestdate desc";
+
+        //            //
+        //            // AND m.fileid=s.fileid
+        //            //            sql += @" ;with ReportCTE1 as ( select convert(varchar,s.createdat,106) + ' ' + convert(varchar(5),s.createdat,108) as requestdate,f.FILENM, 
+        //            //f.campaignname as campaign ,f.senderid as sender,left(s.smsTEXT,30) as message,
+        //            //Cast(round(count(s.id) * isnull(f.smsrate,0)/100,2) as decimal(10,2)) as credit,count(s.id) as smscount,
+        //            //sum(case when isnull(d.dlvrstatus, '') = 'Delivered' then 1 else 0 end) as delivered,
+        //            //sum(case when isnull(d.dlvrstatus, '') <> 'Delivered' AND d.dlvrstatus IS NOT NULL then 1 else 0 end) as failed
+        //            //,sum(case when d.dlvrstatus IS NULL then 1 else 0 end) as AWAITED,
+        //            //sum(case when ms.SHORTURL_ID is null then 0 else 1 end) AS openmsg
+        //            //from smsfileupload f with(nolock)
+        //            //inner join MSGSUBMITTED s with(nolock) on f.userid = s.profileid and f.id=s.fileid 
+        //            //left join delivery d with(nolock) on s.msgid = d.msgid 
+        //            //left join short_urls sh with(nolock) on sh.userid = f.userid and f.shortURLId = sh.id
+        //            //LEFT join mobtrackurl m with(nolock) on sh.ID = m.urlid and m.mobile=s.TOMOBILE AND CONVERT(VARCHAR,F.UPLOADTIME,102)=CONVERT(VARCHAR,M.SENTDATE,102) AND M.SENTDATE>F.UPLOADTIME
+        //            //left join #tmp1 ms on sh.ID = ms.SHORTURL_ID and ms.urlid=m.id 
+        //            //where f.userid = '" + user + @"' and s.sentdatetime between '" + f + @"' and '" + t + @"' and isnull(f.campaignname,'')<>'' ";
+        //            //            if (camp != "" && camp != "0") sql = sql + @" and f.campaignname = '" + camp + "' ";
+        //            //            sql = sql + @" group by f.UPLOADTIME,f.FILENM,f.campaignname,f.senderid,left(s.smsTEXT, 30),f.reccount,f.smsrate,s.fileid,s.createdat )
+        //            //            select DATEADD(MINUTE," + Helper.Global.addMinutes + @",RequestDate) as RequestDate,FILENM,campaign,sender,message,credit,smscount,  delivered, (delivered * 100/smscount) [delivered_p], 
+        //            //            failed,  (failed * 100/smscount) [failed_p],
+        //            //			 AWAITED, (AWAITED * 100/smscount) [AWAITED_p],
+        //            //			openmsg,  (openmsg * 100/smscount) [openmsg_p]
+        //            //		from ReportCTE1 order by requestdate desc";
+
+        //            sql += @" ;with ReportCTE1 as ( select case when s1.schedule IS NULL then convert(varchar,s.SENTDATETIME,102) else s1.schedule end  as requestdate,f.FILENM, 
+        //f.campaignname as campaign ,f.senderid as sender,left(s.smsTEXT,30) as message,
+        //Cast(round(count(s.id) * isnull(f.smsrate,0)/100,2) as decimal(10,2)) as credit,count(s.id) as smscount,
+        //sum(case when isnull(d.dlvrstatus, '') = 'Delivered' then 1 else 0 end) as delivered,
+        //sum(case when isnull(d.dlvrstatus, '') <> 'Delivered' AND d.dlvrstatus IS NOT NULL then 1 else 0 end) as failed
+        //,sum(case when d.dlvrstatus IS NULL then 1 else 0 end) as AWAITED,
+        //sum(case when ms.SHORTURL_ID is null then 0 else 1 end) AS openmsg
+        //from smsfileupload f with(nolock)
+        //inner join MSGSUBMITTED s with(nolock) on f.userid = s.profileid and f.id=s.fileid 
+        //LEFT join MsgSchedule s1 with(nolock) on  s.TOMOBILE=s1.TOMOBILE and s.FILEID=s1.FILEID and convert(varchar,s1.schedule,102)=convert(varchar,s.sentdatetime,102)
+        //left join delivery d with(nolock) on s.msgid = d.msgid 
+        //left join short_urls sh with(nolock) on sh.userid = f.userid and f.shortURLId = sh.id
+        //LEFT join mobtrackurl m with(nolock) on sh.ID = m.urlid and m.mobile=s.TOMOBILE AND CONVERT(VARCHAR,F.UPLOADTIME,102)<=CONVERT(VARCHAR,M.SENTDATE,102) AND M.SENTDATE>F.UPLOADTIME 
+        //left join #tmp1 ms on sh.ID = ms.SHORTURL_ID and ms.urlid=m.id 
+        //where f.userid = '" + user + @"' and s.sentdatetime between '" + f + @"' and '" + t + @"' and isnull(f.campaignname,'')<>'' ";
+        //            if (camp != "" && camp != "0") sql = sql + @" and f.campaignname = '" + camp + "' ";
+        //            sql = sql + @" group by f.FILENM,f.campaignname,f.senderid,left(s.smsTEXT, 30),f.reccount,f.smsrate,s.fileid,
+        //            case when s1.schedule IS NULL then convert(varchar,s.SENTDATETIME,102) else s1.schedule end)
+        //            select DATEADD(MINUTE," + Helper.Global.addMinutes + @",RequestDate) as RequestDate,FILENM,campaign,sender,message,credit,smscount,  delivered, (delivered * 100/smscount) [delivered_p], 
+        //            failed,  (failed * 100/smscount) [failed_p],
+        //			 AWAITED, (AWAITED * 100/smscount) [AWAITED_p],
+        //			openmsg,  (openmsg * 100/smscount) [openmsg_p]
+        //		from ReportCTE1 order by requestdate desc";
+
+        //            ds = database.GetDataSet(sql);
+        //            return ds;
+        //        }
+
+        public DataTable GetCampaignToday(string user)
+        {
+            DataTable dt = new DataTable("dt");
+            string sql = @"select campaignname from smsfileupload where userid='" + user + "' and isnull(campaignname,'') <> '' and convert(varchar,uploadtime,102)=convert(varchar,getdate(),102) ";
+            dt = database.GetDataTable(sql);
+            return dt;
+        }
+
+        public DataTable GetCampaignAll(string user)
+        {
+            DataTable dt = new DataTable("dt");
+            string sql = @"select distinct campaignname from smsfileupload where userid='" + user + "' and isnull(campaignname,'') <> '' order by campaignname ";
+            dt = database.GetDataTable(sql);
+            return dt;
+        }
+
+        public void UpdateLastActivity(string user)
+        {
+            string sql = "Update logindtl set lastactivitytime=getdate() where userid = '" + user + "'";
+            database.ExecuteNonQuery(sql);
+
+        }
+
+        public void InsertMsgTomsgtranForTemplateTest(string smppAcId, string profileId, string msg, string mobile, string senderId, string fileId, string peid, string templId, string dataCode)
+        {
+            string sql = string.Format("INSERT INTO MSGTRAN (PROVIDER,SMPPACCOUNTID,PROFILEID,MSGTEXT,TOMOBILE,SENDERID,CREATEDAT,FILEID,peid,DATACODE,Templateid)" +
+                " Values('Test', '{0}','{1}', N'{2}', '{3}','{4}',GETDATE(),'{5}','{6}','{7}','{8}')", smppAcId, profileId, msg, mobile, senderId, fileId, peid, dataCode, templId);
+            database.ExecuteNonQuery(sql);
+        }
+        // --------------add new method here
+
+        public DataTable Daily()
+        {
+            DataTable dtSetting = database.GetDataTable("select DailyNotify,convert(varchar(16),DailySentOn,120) [DailySentOn] from settings");
+            string UpDate = ""; string userid = "";
+            string sql = "";
+            string final = "";
+            sql = @"Select Email,Mobileno,UserName,convert(varchar(16),dailySenton,120) [dailySenton],convert(varchar(16),getdate(),120) [tdyDate] from notification where Daily=1";
+            DataTable dt = new DataTable("dt");
+            dt = database.GetDataTable(sql);
+            foreach (DataRow dr in dt.Rows)
+            {
+                string Email = dr["Email"].ToString();
+                string Mobileno = dr["Mobileno"].ToString();
+                string username = dr["UserName"].ToString();
+                //  string daily = dr["dailySenton"].ToString();
+                if (Convert.ToBoolean(dtSetting.Rows[0]["DailyNotify"]) == true && Convert.ToDateTime(dtSetting.Rows[0]["dailySenton"]) == Convert.ToDateTime(dr["tdyDate"]))
+                {
+                    string check = @"select DATEDIFF(Day,dailySenton,GETDATE()) AS date from notification where UserName='" + username + "'";
+                    DataTable dc = new DataTable("dc");
+                    try
+                    {
+                        dc = database.GetDataTable(check);
+                        if (Convert.ToInt16(dc.Rows[0]["date"]) >= 1)
+                        {
+                            final = @"select SMSDATE,USERID,sum(SUBMITTED) as SUBMITTED ,sum(DELIVERED) as DELIVERED ,sum(FAILED) as FAILED ,sum(UNKNOWN) as UNKNOWN  from daysummary where USERID ='" + username + "' and SMSDATE=Convert(Date,'2021-06-08')  Group by SMSDATE,USERID";
+                            DataTable d = new DataTable("d");
+                            d = database.GetDataTable(final);
+                            String a = " UserId: ";
+                            String b = " SMSDATE: ";
+                            String c = " SUBMITTED: ";
+                            String r = " DELIVERED: ";
+                            String f = " FAILED: ";
+                            string m = " UNKNOWN: ";
+                            string message = "";
+                            if (d.Rows.Count > 0)
+                                message = a + d.Rows[0]["USERID"].ToString() + b + d.Rows[0]["SMSDATE"].ToString() + c + d.Rows[0]["SUBMITTED"].ToString()
+                                    + r + d.Rows[0]["DELIVERED"].ToString() + f + d.Rows[0]["FAILED"].ToString() + m + d.Rows[0]["UNKNOWN"].ToString();
+                            smssending(Mobileno, username, message);
+                            SendEmailSVH(Email, "Daily Report", message, "noreply@textiyapa.com", "IP#396395", "Host", "");
+                            UpDate = @"Update notification set dailySenton= getdate() where UserName='" + username + "'";
+                            database.ExecuteNonQuery(UpDate);
+                        }
+                    }
+                    catch (Exception ex)
+                    {
+
+                    }
+
+                }
+
+            }
+            return dt;
+        }
+        public DataTable Weekly()
+        {
+            DataTable dtSetting = database.GetDataTable("select WeeklyNotify,convert(varchar(16),WeeklySentOn,120) [WeeklySentOn] from settings");
+
+            string UpDate = "";
+            string sql = "";
+            string final = "";
+            string check = "";
+            sql = @"Select Email,Mobileno,UserName,convert(varchar(16),WeeklySentOn,120) [WeeklySentOn],convert(varchar(16),getdate(),120) [tdyDate] from notification where weekly=1";
+
+            DataTable dt = new DataTable("dt");
+            dt = database.GetDataTable(sql);
+            foreach (DataRow dr in dt.Rows)
+            {
+                string Email = dr["Email"].ToString();
+                string Mobileno = dr["Mobileno"].ToString();
+                string userName = dr["UserName"].ToString();
+                //if (Convert.ToBoolean(dtSetting.Rows[0]["WeeklyNotify"]) == true && Convert.ToDateTime(dtSetting.Rows[0]["WeeklySenton"]) == Convert.ToDateTime(dr["tdyDate"]))
+                {
+                    // string week = dr["dailySenton"].ToString();
+                    check = @"select DATEDIFF(Week,weeklysenton,GETDATE()) AS date from notification where UserName='" + userName + "'";
+                    DataTable dc = new DataTable("dc");
+                    dc = database.GetDataTable(check);
+                    try
+                    {
+                        if (Convert.ToInt16(dc.Rows[0]["date"]) >= 1)
+                        {
+                            final = @"select convert(varchar(11),SMSDATE,105) [SMSDATE],USERID,sum(SUBMITTED) as SUBMITTED ,sum(DELIVERED) as DELIVERED ,sum(FAILED) as FAILED ,sum(UNKNOWN) as UNKNOWN  from dAysUmMary where USERID ='" + userName + "' and SMSDATE >=DATEADD(day,-7,Convert (Date,GetDate())) Group by SMSDATE,USERID";
+                            DataTable d = new DataTable("d");
+                            d = database.GetDataTable(final);
+                            String a = " UserId: ";
+                            String b = " SMSDATE: ";
+                            String c = " SUBMITTED: ";
+                            String r = " DELIVERED: ";
+                            String f = " FAILED: ";
+                            string m = " UNKNOWN: ";
+                            string toDate = d.AsEnumerable().Last()["SMSDATE"].ToString();
+                            object submitted;
+                            submitted = d.Compute("Sum(SUBMITTED)", string.Empty);
+                            object delivered;
+                            delivered = d.Compute("Sum(DELIVERED)", string.Empty);
+                            object failed;
+                            failed = d.Compute("Sum(FAILED)", string.Empty);
+                            object unknown;
+                            unknown = d.Compute("Sum(UNKNOWN)", string.Empty);
+
+                            string message = "";
+                            if (d.Rows.Count > 0)
+                                message = a + d.Rows[0]["USERID"].ToString() + b + d.Rows[0]["SMSDATE"].ToString() + " - " + toDate + c + submitted.ToString()
+                                    + r + delivered.ToString() + f + failed.ToString() + m + unknown.ToString();
+                            smssending(Mobileno, userName, message);
+                            SendEmailSVH(Email, "Weekly Report", message, "noreply@textiyapa.com", "IP#396395", "Host", "");
+                            //        UpDate = @"Update notification set weeklysenton= getdate() where UserName='" + userName + "'";
+                            database.ExecuteNonQuery(UpDate);
+                        }
+
+                    }
+                    catch (Exception ex)
+                    {
+
+                    }
+                }
+            }
+            return dt;
+        }
+        public DataTable Monthly()
+        {
+            DataTable dtSetting = database.GetDataTable("select MonthlyNotify,convert(varchar(16),MonthlySentOn,120) [MonthlySentOn] from settings");
+
+            string premonth = "";
+            string UpDate = "";
+            string sql = "";
+            string final = "";
+            string check = "";
+            sql = @"Select *,convert(varchar(16),getdate(),120)[tdyDate] from notification where Monthly=1 ";
+            DataTable dt = new DataTable("dt");
+            dt = database.GetDataTable(sql);
+            foreach (DataRow dr in dt.Rows)
+            {
+                string Email = dr["Email"].ToString();
+                string Mobileno = dr["Mobileno"].ToString();
+                string value = dr["UserName"].ToString();
+                //string week = dr["weeklysenton"].ToString();
+                // if (Convert.ToBoolean(dtSetting.Rows[0]["MonthlyNotify"]) == true && Convert.ToDateTime(dtSetting.Rows[0]["monthlySenton"]) == Convert.ToDateTime(dr["tdyDate"]))
+                {
+                    check = @"select LEFT(datename(month,dateadd(month,0,monthlySenton)),3) as month from  notification where UserName='" + value + "'";
+                    DataTable dP = new DataTable("dP");
+                    dP = database.GetDataTable(check);
+                    premonth = @"select LEFT(datename(month,dateadd(month,-1,getdate())),3) as month ";
+                    DataTable dS = new DataTable("dS");
+                    dS = database.GetDataTable(premonth);
+                    try
+                    {
+                        if ((dP.Rows[0]["month"]) != (dS.Rows[0]["month"]))
+                        {
+                            final = @"select SMSDATE,USERID,sum(SUBMITTED) as SUBMITTED ,sum(DELIVERED) as DELIVERED ,sum(FAILED) as FAILED ,sum(UNKNOWN) as UNKNOWN  from dAysUmMary where USERID ='" + value + "' and SMSDATE >=DATEADD(day,-30,Convert (Date,GetDate())) Group by SMSDATE,USERID";
+                            DataTable d = new DataTable("d");
+                            d = database.GetDataTable(final);
+                            object submitted;
+                            submitted = d.Compute("Sum(SUBMITTED)", string.Empty);
+                            object delivered;
+                            delivered = d.Compute("Sum(DELIVERED)", string.Empty);
+                            object failed;
+                            failed = d.Compute("Sum(FAILED)", string.Empty);
+                            object unknown;
+                            unknown = d.Compute("Sum(UNKNOWN)", string.Empty);
+
+                            String a = " UserId: ";
+                            String b = " SMSDATE: ";
+                            String c = " SUBMITTED: ";
+                            String r = " DELIVERED: ";
+                            String f = " FAILED: ";
+                            string m = " UNKNOWN: ";
+                            string userid = "";
+                            string From = " FROMDATE: ";
+                            string T = " TODATE: ";
+                            string FD = @"select DATEADD(Month,DATEDIFF(MONTH,0,GETDATE())-1,0) AS FROMDATE,DATEADD(Month,DATEDIFF(MONTH,-1,GETDATE())-1,-1) as TODATE";
+                            DataTable dF = new DataTable("dF");
+                            dF = database.GetDataTable(FD);
+                            string Record = a + d.Rows[0]["USERID"].ToString() + From + dF.Rows[0]["FROMDATE"].ToString() + T + dF.Rows[0]["TODATE"].ToString() + c + submitted.ToString()
+                                 + r + delivered.ToString() + f + failed.ToString() + m + unknown.ToString();
+                            smssending(Mobileno, userid, Record);
+                            SendEmailSVH(Email, "Weekly Report", Record, "noreply@textiyapa.com", "IP#396395", "Host", "");
+                            UpDate = @"Update notification set monthlySenton= getdate() where UserName='" + value + "'";
+                            database.ExecuteNonQuery(UpDate);
+
+                        }
+
+                    }
+                    catch (Exception ex)
+                    { }
+                }
+
+            }
+            return dt;
+
+
+        }
+
+        public void smssending(string Mobileno, string userid, string Record)
+        {
+            SendSMSthroughAPI(Mobileno, Record, userid);
+            string a = "Send sms sucessfully";
+        }
+        public void emailsending(string toAddress, string subject, string body, string MailFrom, string Pwd, string Host, string cc)
+        {
+            //"noreply@textiyapa.com", "IP#396395", "smtpout.secureserver.net"
+            SendEmailSVH(toAddress, subject, body, MailFrom, Pwd, Host, cc);
+        }
+
+        public DataTable GetNotification(string userid, string richmedia = "")
+        {
+            string sql = "";
+
+            sql = @"SELECT username, 
+                    STUFF(
+                    ISNULL(',' + Mobileno, '') + 
+                    ISNULL(',' + mob1, '') + 
+                    ISNULL(',' + mob2, '') + 
+                    ISNULL(',' + mob3, '') +
+                    ISNULL(',' + mob4, ''),1,1,'') as [MobileDetails],
+                    STUFF(
+                    ISNULL(',' + Email, '') + 
+                    ISNULL(',' + Email1, '') + 
+                    ISNULL(',' + Email2, '') + 
+                    ISNULL(',' + Email3, '') +
+                    ISNULL(',' + Email4, ''),1,1,'') as [EmailDetails],
+                    Daily,Weekly,Monthly from notification where UserName='" + userid + "' ";
+            DataTable dt = new DataTable("dt");
+            dt = database.GetDataTable(sql);
+            return dt;
+        }
+
+        public DataTable UpdateNotification(string userid, string url, string Email, string MobileNo, bool Daily, bool Weekly, bool Monthly, string richmedia = "")
+        {
+            string count = "";
+            count = @"select count(*) as cnt from Notification where Username='" + userid + "'";
+            DataTable d = new DataTable("dt");
+            d = database.GetDataTable(count);
+
+            if (Convert.ToInt16(d.Rows[0]["cnt"]) == 0)
+            {
+                string sql = "";
+
+                sql = @"Insert into notification(UserName,Mobileno,Email,Daily,Weekly,Monthly,dailySenton,weeklysenton,monthlySenton)
+                      Values ('" + userid + "','" + MobileNo + "','" + Email + "','" + Daily + "','" + Weekly + "','" + Monthly + "',dateadd(d,-1,getdate()),dateadd(d,-7,getdate()),dateadd(m,-1,getdate()))";
+                DataTable dt = new DataTable("dt");
+                dt = database.GetDataTable(sql);
+                return dt;
+
+            }
+            else
+            {
+                string sql = "";
+
+                sql = @"update Notification set Mobileno='" + MobileNo + "',Email='" + Email + "',Daily='" + Daily + "',Weekly='" + Weekly + "',Monthly='" + Monthly + "' where UserName='" + userid + "'";
+                DataTable dt = new DataTable("dt");
+                dt = database.GetDataTable(sql);
+                return dt;
+            }
+        }
+
+        // --------------END new method here
+
+
+        public string SaveBlackListMobileNo(string FilePath, string Operator, string UpdateDate, string EXT)
+        {
+            try
+            {
+                string moblen = "10";
+                DataTable dt = new DataTable();
+                if (EXT.Contains("TXT"))
+                {
+                    dt = ReadTextFile(FilePath, moblen);
+                }
+                else if (EXT.Contains("XLS"))
+                {
+                    dt = ReadExcel(FilePath, moblen);
+
+                }
+
+                if (dt.Rows.Count == 0)
+                    return "Mobile Numbers in the file are not Numeric. Please check the file. ";
+                else
+                {
+                    string cc = "91";
+                    int Y = dt.Rows.Count;
+                    foreach (DataRow dr in dt.Rows)
+                    {
+                        string sql = string.Format("IF NOT EXISTS (SELECT * FROM globalblacklistno WHERE mobile = '{0}') INSERT INTO globalblacklistno(mobile,Operator,UpdateDate) VALUES('{1}','{2}','{3}') ;", dr["MobNo"], dr["MobNo"], Operator, UpdateDate);
+                        sql += string.Format("IF NOT EXISTS (SELECT * FROM globalblacklistno WHERE mobile = '{0}') INSERT INTO globalblacklistno(mobile,Operator,UpdateDate) VALUES('{1}','{2}','{3}')", cc + dr["MobNo"], cc + dr["MobNo"], Operator, UpdateDate);
+
+                        //string sql128 = string.Format("IF NOT EXISTS (SELECT * FROM blacklistno WHERE mobile = '{0}') INSERT INTO blacklistno(mobile,Operator,UpdateDate) VALUES('{1}','{2}','{3}')", cc + dr["MobNo"], cc + dr["MobNo"], Operator, UpdateDate);
+                        //string sql17 = string.Format("IF NOT EXISTS (SELECT * FROM blacklistno WHERE mobile = '{0}') INSERT INTO blacklistno(mobile,Operator,UpdateDate) VALUES('{1}','{2}','{3}')", cc + dr["MobNo"], cc + dr["MobNo"], Operator, UpdateDate);
+
+                        //database.ExecuteNonQueryForMultipleConnection(sql, sql128, sql17);
+                        database.ExecuteNonQuery(sql);
+                    }
+                    return "RECORDCOUNT " + Y.ToString();
+
+                }
+
+            }
+            catch (Exception ex)
+            {
+                return "Error";
+            }
+        }
+        public string SaveBlackListMobileNoEntry(List<string> moblist, string Operator, string UpdateDate)
+        {
+            try
+            {
+                string moblen = "10";
+
+
+                if (moblist.Count == 0)
+                    return "Mobile Numbers are not numeric. Please check. ";
+                else
+                {
+                    string cc = "91";
+                    int Y = moblist.Count;
+                    for (int i = 0; i < moblist.Count; i++)
+                    {
+                        string sql = string.Format("IF NOT EXISTS (SELECT * FROM globalblacklistno WHERE mobile = '{0}') INSERT INTO globalblacklistno(mobile,Operator,UpdateDate) VALUES('{1}','{2}','{3}') ;", moblist[i], moblist[i], Operator, UpdateDate);
+                        sql += string.Format("IF NOT EXISTS (SELECT * FROM globalblacklistno WHERE mobile = '{0}') INSERT INTO globalblacklistno(mobile,Operator,UpdateDate) VALUES('{1}','{2}','{3}')", cc + moblist[i], cc + moblist[i], Operator, UpdateDate);
+
+                        //string sql128 = string.Format("IF NOT EXISTS (SELECT * FROM blacklistno WHERE mobile = '{0}') INSERT INTO blacklistno(mobile,Operator,UpdateDate) VALUES('{1}','{2}','{3}')", cc + moblist[i], cc + moblist[i], Operator, UpdateDate);
+                        //string sql17 = string.Format("IF NOT EXISTS (SELECT * FROM blacklistno WHERE mobile = '{0}') INSERT INTO blacklistno(mobile,Operator,UpdateDate) VALUES('{1}','{2}','{3}')", cc + moblist[i], cc + moblist[i], Operator, UpdateDate);
+
+                        //database.ExecuteNonQueryForMultipleConnection(sql, sql128, sql17);
+                        database.ExecuteNonQuery(sql);
+                    }
+
+                    return "RECORDCOUNT " + Y.ToString();
+
+                }
+
+            }
+            catch (Exception ex)
+            {
+                return "Error";
+            }
+        }
+        public string SaveBlackListMobileNo(string FilePath, string Operator, string UpdateDate, string UserId, string EXT) // As per User
+        {
+            try
+            {
+                string moblen = "10";
+                DataTable dt = new DataTable();
+                if (EXT.Contains("TXT"))
+                {
+                    dt = ReadTextFile(FilePath, moblen);
+                }
+                else if (EXT.Contains("XLS"))
+                {
+                    dt = ReadExcel(FilePath, moblen);
+
+                }
+
+
+                if (dt.Rows.Count == 0)
+                    return "Mobile Numbers in the file are not Numeric. Please check the file. ";
+                else
+                {
+                    string cc = "91";
+                    int Y = dt.Rows.Count;
+                    foreach (DataRow dr in dt.Rows)
+                    {
+                        string sql = string.Format("IF NOT EXISTS (SELECT * FROM blacklistno WHERE MOBILENO = '{0}') INSERT INTO blacklistno(MOBILENO,Operator,UpdateDate,UserId) VALUES('{0}','{1}','{2}','{3}')", cc + dr["MobNo"], Operator, UpdateDate, UserId);
+                        database.ExecuteNonQuery(sql);
+                    }
+                    return "RECORDCOUNT " + Y.ToString();
+
+                }
+
+            }
+            catch (Exception ex)
+            {
+                return "Error";
+            }
+        }
+        public string SaveBlackListMobileNoEntry(List<string> moblist, string Operator, string UpdateDate, string UserId) // As per User
+        {
+            try
+            {
+                if (moblist.Count == 0)
+                    return "Mobile Numbers are not numeric. Please check. ";
+                else
+                {
+                    string cc = "91";
+                    int Y = moblist.Count;
+                    for (int i = 0; i < moblist.Count; i++)
+                    {
+                        string sql = string.Format("IF NOT EXISTS (SELECT * FROM blacklistno WHERE MOBILENO = '{0}') INSERT INTO blacklistno(MOBILENO,Operator,UpdateDate,UserId) VALUES('{0}','{1}','{2}','{3}')", cc + moblist[i], Operator, UpdateDate, UserId);
+
+                        database.ExecuteNonQuery(sql);
+                    }
+
+                    return "RECORDCOUNT " + Y.ToString();
+
+                }
+
+            }
+            catch (Exception ex)
+            {
+                return "Error";
+            }
+        }
+
+        public DataTable GetOperator()
+        {
+            string sql = "";
+
+            sql = @"select provider,id from Operator ";
+            DataTable dt = new DataTable("dt");
+            dt = database.GetDataTable(sql);
+            return dt;
+        }
+
+        public DataTable ReadExcel(string path, string moblen)
+        {
+            try
+            {
+                DataTable dt = new DataTable();
+                DataTable dtresult = new DataTable();
+                dtresult.Columns.Add("MobNo");
+
+                OleDbDataAdapter OleDa;
+                string excelcon = string.Format("Provider=Microsoft.ACE.OLEDB.12.0;Data Source={0}; Extended Properties=Excel 8.0", path);
+                using (OleDbConnection con = new OleDbConnection(excelcon))
+                {
+                    con.Open();
+                    DataTable dtschema = con.GetOleDbSchemaTable(OleDbSchemaGuid.Tables, null);
+                    if (dtschema != null && dtschema.Rows.Count > 0)
+                    {
+                        string sheetname = dtschema.Rows[0]["TABLE_NAME"].ToString();
+                        OleDa = new OleDbDataAdapter("Select * from [" + sheetname + "]", con);
+                        OleDa.Fill(dt);
+                    }
+                }
+                List<string> lines = new List<string>();
+                for (int i = 0; i < dt.Rows.Count; i++)
+                {
+                    lines.Add(dt.Rows[i][0].ToString().Trim());
+                }
+                lines = lines.Select(t => Regex.Replace(t, "[^0-9]", "")).ToList();
+                lines.RemoveAll(x => x.Length < Convert.ToInt16(moblen));
+                lines = lines.Select(x => x.Substring(x.Length - Convert.ToInt16(moblen))).ToList();
+                lines.ForEach((item) => dtresult.Rows.Add(item));
+                return dtresult;
+            }
+            catch (Exception ex)
+            {
+                throw;
+            }
+
+        }
+
+        public DataTable GetCountryTimeZone(string cc)
+        {
+            string sql = "Select smsFromTime,smsToTime,timedifferenceInMinute,mobLength,CURRENCY,subDomain,SubCurrency,maximgfilesize,maxvideofilesize,isnull(NoticeMsg,'') NoticeMsg from tblCountry where counryCode='" + cc + "'";
+            return database.GetDataTable(sql);
+        }
+        public DataTable GetSMPPSettingTimeZone(string type)
+        {
+            string sql = "";
+            if (type == "6")
+                sql = "Select smsFromTime,smsToTime from SMPPSETTING where isnull(Forpromotional,0)=1";
+            else if (type == "3")
+                sql = "Select smsFromTime,smsToTime from SMPPSETTING where isnull(FORCAMPAIGN,0)=1";
+            return database.GetDataTable(sql);
+        }
+        public DataTable GetSMPPAccountIdTimeZone(string userid)
+        {
+            string sql = "select smsFromTime,smsToTime From SMPPSETTING s INNER JOIN smppaccountuserid a ON s.smppaccountid=a.smppaccountid where a.userid='" + userid + "'";
+            DataTable dt = database.GetDataTable(sql);
+            if (dt.Rows.Count == 0)
+                return database.GetDataTable("Select Top 1 smsFromTime,smsToTime from SMPPSETTING where isnull(FORFILE,0)=1");
+            else
+                return dt;
+        }
+
+        public string ValidateDLT(string username)
+        {
+            return Convert.ToString(database.GetScalarValue("SELECT DLTNO FROM CUSTOMER where username='" + username + "'"));
+        }
+
+        public DataTable GetDayWiseReport(string f, string t)
+        {
+            string sql = @"select FORMAT(CAST(SMSDATE as date), 'dd-MM-yyyy') SMSDATE, SUM(SUBMITTED) Submitted,SUM(DELIVERED) DELIVERED,SUM(FAILED) FAILED,sum(UNKNOWN) UNKNOWN from DAYSUMMARY where SMSDATE between '" + f + @"' and '" + t + "' group by CAST(SMSDATE as date) order by 1 desc";
+
+            return database.GetDataTable(sql);
+
+        }
+
+        public void LogError(string title, string msg)
+        {
+            try
+            {
+
+                FileStream fs = new FileStream(System.Configuration.ConfigurationManager.AppSettings["LOGPATH1"].ToString() + @"Log" + DateTime.Now.ToString("ddMMMyyyyHH") + ".txt", FileMode.OpenOrCreate, FileAccess.Write);
+                StreamWriter m_stramWriter = new StreamWriter(fs);
+                m_stramWriter.BaseStream.Seek(0, SeekOrigin.End);
+                m_stramWriter.WriteLine(Convert.ToString(DateTime.Now) + "_" + title + "_" + msg);
+                m_stramWriter.Flush();
+                m_stramWriter.Close();
+
+            }
+            catch (Exception ex)
+            {
+                throw;
+            }
+        }
+
+        public void DeleteSenderIdRequest(string query)
+        {
+            if (!string.IsNullOrEmpty(query))
+                database.ExecuteNonQuery(query);
+        }
+        public DataTable GetPendingSenderIdList(string username)
+        {
+            string sql = "";
+            sql = @"select row_number() over (Order by s.createdat DESC) as Sln, C.compname,C.fullname,C.mobile1 as mobile,C.email,s.senderid as sender,C.username as userid,s.filepath,s.countrycode " +
+            " from customer C inner join senderidrequeset s on c.username=s.username where (isnull(s.rejected,0)=0 and isnull(s.allotedsenderid,'')='') AND s.username='" + username + "' ORDER BY s.createdat DESC ";
+
+            DataTable dt = database.GetDataTable(sql);
+            return dt;
+        }
+        public DataTable GetApprovedSenderIdList(string username)
+        {
+            string sql = "select userid,senderid as sender,countrycode from senderidmast where userid='" + username + "'";
+            DataTable dt = database.GetDataTable(sql);
+            return dt;
+        }
+        public DataTable GetRejectedSenderIdList(string username)
+        {
+            string sql = "select username as userid,senderid as sender,countrycode from senderidrequeset where username='" + username + "' and isnull(rejected,0)=1";
+            DataTable dt = database.GetDataTable(sql);
+            return dt;
+        }
+
+        public DateTime Setdate(string Cdate)
+        {
+            char[] a = { ',' };
+            string[] date = Cdate.Split('-');
+            DateTime dt = new DateTime(int.Parse(date[0].ToString()), int.Parse(date[1].ToString()), int.Parse(date[2].ToString()));
+            return dt;
+        }
+
+        //public DataSet SP_GetCampaignWiseDatap(string user, DateTime s1, DateTime s2, string camp)
+        //{
+        //    DataSet ds = new DataSet();
+        //    using (SqlConnection cnn = new SqlConnection(database.GetConnectstring()))
+        //    {
+        //        SqlCommand cmd = new SqlCommand();
+        //        cmd.Connection = cnn;
+        //        cmd.CommandTimeout = 3600;
+        //        SqlDataAdapter da = new SqlDataAdapter();
+        //        da.SelectCommand = cmd;
+        //        cmd.CommandType = CommandType.StoredProcedure;
+        //        cmd.CommandText = "SP_Getcampaigrpt";
+
+        //        cmd.Parameters.AddWithValue("usr", user);
+        //        cmd.Parameters.AddWithValue("Fdate", s1);
+        //        cmd.Parameters.AddWithValue("tdate", s2);
+        //        cmd.Parameters.AddWithValue("camp", camp);
+
+        //        da.Fill(ds);
+        //    }
+        //    return ds;
+        //}
+
+        public void UpdateRateAspercountry(string sql)
+        {
+            database.ExecuteNonQuery(sql);
+        }
+
+        public DataTable GetWATemplateText(string usernm, string templatenm)
+        {
+            DataTable dt = new DataTable("dt");
+            string user = "tmp1_" + usernm;
+            string sql = @"Select Template,templateid,TempName from templaterequest where username = '" + usernm + "' and IsWhatsapp=1 and templateid = '" + templatenm + "'";
+            dt = database.GetDataTable(sql);
+            return dt;
+        }
+        public void sendWhatsapp(string msgtext, List<string> MobList, string profileid, string Sender, string TemplateId, string TemplateName, string campname = "")
+        {
+            try
+            {
+                string Insertsql = @" declare @id int=0
+                select @id = isnull(max(fileid),0)+1 from [WARCSfile] ;
+                insert into warcsfile(fileid,CommType,userid,campaignname,templatename)
+                select @id,'WA','" + profileid + "','" + campname + "','" + TemplateName + "' ";
+
+
+                Insertsql = Insertsql + @" INSERT INTO [dbo].[WAMSGTRAN] (PROVIDER,SMPPACCOUNTID,PROFILEID,MSGTEXT,TOMOBILE,SENDERID,CREATEDAT,FILEID,peid,DATACODE,smsrate,templateid,TemplateName)";
+                string seletsql = "";
+                for (int p = 0; p < MobList.Count; p++)
+                {
+                    if (p > 0)
+                    {
+                        seletsql = seletsql + @" UNION ALL  Select 'VCON' as PROVIDER, 0, '" + profileid + @"' as PROFILEID, '" +
+                    msgtext + "' as MSGTEXT, CONVERT(nvarchar(255),LTRIM(RTRIM(str(ISNULL('" + MobList[p].Trim() + @"',0),20,0)))) as TOMOBILE
+                , '" + Sender + @"' as SENDERID, GETDATE() as CREATEDAT,@id,'NA' as peid,'Default' AS DATACODE,12 as smsrate,'" + TemplateId + "' AS templateid ,'" + TemplateName + "' ";
+                    }
+                    else
+                    {
+                        seletsql = seletsql + @" Select 'VCON' as PROVIDER, 0, '" + profileid + @"' as PROFILEID, '" +
+                    msgtext + "' as MSGTEXT, CONVERT(nvarchar(255),LTRIM(RTRIM(str(ISNULL('" + MobList[p].Trim() + @"',0),20,0)))) as TOMOBILE
+                , '" + Sender + @"' as SENDERID, GETDATE() as CREATEDAT,@id,'NA' as peid,'Default' AS DATACODE,12 as smsrate,'" + TemplateId + "' AS templateid ,'" + TemplateName + "' ";
+                    }
+
+                }
+
+                string sql = Insertsql + seletsql;
+                database.ExecuteNonQuery(sql);
+            }
+            catch (Exception ex)
+            {
+
+                throw;
+            }
+
+        }
+
+        public void sendRCS(string msgtext, List<string> MobList, string profileid, string Sender, string TemplateId, string TemplateName, string campname = "")
+        {
+            try
+            {
+                string Insertsql = @" declare @id int=0
+                select @id = isnull(max(fileid),0)+1 from [WARCSfile] ;
+                insert into warcsfile(fileid,CommType,userid,campaignname,templatename)
+                select @id,'RCS','" + profileid + "','" + campname + "','" + TemplateName + "' ";
+
+                Insertsql = Insertsql + @" INSERT INTO [dbo].[RCSMSGTRAN] (PROVIDER,SMPPACCOUNTID,PROFILEID,MSGTEXT,TOMOBILE,SENDERID,CREATEDAT,FILEID,peid,DATACODE,smsrate,templateid,TemplateName,MSGID2)";
+                string seletsql = "";
+                for (int p = 0; p < MobList.Count; p++)
+                {
+                    if (p > 0)
+                    {
+                        seletsql = seletsql + @" UNION ALL  Select 'VCON' as PROVIDER, 0, '" + profileid + @"' as PROFILEID, '" +
+                    msgtext + "' as MSGTEXT, CONVERT(nvarchar(255),LTRIM(RTRIM(str(ISNULL('" + MobList[p].Trim() + @"',0),20,0)))) as TOMOBILE
+                , '" + Sender + @"' as SENDERID, GETDATE() as CREATEDAT,@id,'NA' as peid,'Default' AS DATACODE,12 as smsrate,'" + TemplateId + "' AS templateid ,'" + TemplateName + "',newid() ";
+                    }
+                    else
+                    {
+                        seletsql = seletsql + @" Select 'VCON' as PROVIDER, 0, '" + profileid + @"' as PROFILEID, '" +
+                    msgtext + "' as MSGTEXT, CONVERT(nvarchar(255),LTRIM(RTRIM(str(ISNULL('" + MobList[p].Trim() + @"',0),20,0)))) as TOMOBILE
+                , '" + Sender + @"' as SENDERID, GETDATE() as CREATEDAT,@id,'NA' as peid,'Default' AS DATACODE,12 as smsrate,'" + TemplateId + "' AS templateid ,'" + TemplateName + "',newid() ";
+                    }
+
+                }
+
+                string sql = Insertsql + seletsql;
+                database.ExecuteNonQuery(sql);
+            }
+            catch (Exception ex)
+            {
+
+                throw;
+            }
+
+        }
+
+        public bool IsWABARCS(string username)
+        {
+            return Convert.ToBoolean(database.GetScalarValue("SELECT isnull(wabarcs,0) wabarcs FROM CUSTOMER WHERE username='" + username + "'"));
+        }
+        public void WABARCSBalUpdate(string userid, int cnt)
+        {
+            string sql = "UPDATE CUSTOMER SET WABARCSbal = WABARCSbal - " + Convert.ToString(cnt) + " WHERE username = '" + userid + "'";
+            database.ExecuteNonQuery(sql);
+        }
+        public bool isBalanceAvailable_WABARCS(string userid, int cnt)
+        {
+            string sql = "select WABARCSbal from customer with (nolock) WHERE username = '" + userid + "'";
+            int b = Convert.ToInt16(database.GetScalarValue(sql));
+            return (b >= cnt);
+        }
+        public DataTable Get_WA_Report(string f, string t, string usertype, string user, string campnm = "")
+        {
+            string sql = "";
+            sql = @" select convert(varchar(30),s.inserttime,103) as submitdate,convert(date,s.inserttime) inserttime,
+count(s.messageId) submitted,
+sum(case when isnull(d.status_groupName, '') = 'Delivered' then 1 else 0 end) as delivered,
+sum(case when isnull(d.status_groupName, '') <> 'Delivered' AND d.status_groupName IS NOT NULL then 1 else 0 end) as failed,
+sum(case when d.status_groupName IS NULL then 1 else 0 end) as unknown, profileid as userid
+from customer c with(nolock)
+INNER JOIN WAsubmitted s with(nolock) on c.username = s.profileid
+INNER JOIN WARCSfile f with(nolock) on f.fileid = s.fileid and CommType='WA'
+LEFT JOIN  [10.10.31.35].[SMPPMAIN_TX].[dbo].[DeliveryWABA] d with(nolock) on s.messageId = d.msgid and convert(varchar,s.inserttime,102)=convert(varchar,d.inserttime,102)
+where c.username = '" + user + @"' and s.inserttime between '" + f + @"' and '" + t + @"' ";
+            if (campnm != "" && campnm != "0") sql = sql + @" and f.campaignname = '" + campnm + "' ";
+            sql = sql + @" group by profileid,convert(varchar(30),s.inserttime,103),convert(date,s.inserttime)
+order by convert(date,s.inserttime)";
+            DataTable dt = database.GetDataTable(sql);
+
+            var rows = dt.Select("submitted = 0");
+            foreach (var row in rows)
+                row.Delete();
+            dt.AcceptChanges();
+            return dt;
+        }
+
+        public DataTable Get_RCS_Report(string f, string t, string usertype, string user, string campnm = "")
+        {
+            string sql = "";
+            sql = @" select convert(varchar(30),s.inserttime,103) as submitdate,convert(date,s.inserttime) inserttime,count(s.messageId) submitted,
+sum(case when isnull(d.status_groupName, '') = 'Delivered' then 1 else 0 end) as delivered,
+sum(case when isnull(d.status_groupName, '') <> 'Delivered' AND d.status_groupName IS NOT NULL then 1 else 0 end) as failed,
+sum(case when d.status_groupName IS NULL then 1 else 0 end) as unknown
+, profileid as userid from customer c with(nolock)
+INNER JOIN rcssubmitted s with(nolock) on c.username = s.profileid
+INNER JOIN WARCSfile f with(nolock) on f.fileid = s.fileid and CommType='RCS'
+LEFT JOIN  [10.10.31.35].[SMPPMAIN_TX].[dbo].[DeliveryRCS] d with(nolock) on s.messageId = d.msgid and convert(varchar,s.inserttime,102)=convert(varchar,d.inserttime,102)
+where c.username = '" + user + @"' and s.inserttime between '" + f + @"' and '" + t + @"' ";
+            if (campnm != "" && campnm != "0") sql = sql + @" and f.campaignname = '" + campnm + "' ";
+            sql = sql + @" group by profileid,convert(varchar(30),s.inserttime,103),convert(date,s.inserttime)
+order by convert(date,s.inserttime)";
+            DataTable dt = database.GetDataTable(sql);
+
+            var rows = dt.Select("submitted = 0");
+            foreach (var row in rows)
+                row.Delete();
+            dt.AcceptChanges();
+            return dt;
+        }
+
+        public DataTable GetWADetail(string date, string userid)
+        {
+            string sql = "";
+            string str = "";
+            string str2 = "convert(varchar,m.tomobile)";
+            int SHOWMOBILEXXXX = Convert.ToInt16(database.GetScalarValue("Select isnull(showmobilexxxx,0) from customer where username='" + userid + "' "));
+            if (SHOWMOBILEXXXX == 1) str = "' ' + left(convert(varchar, m.tomobile), len(convert(varchar, m.tomobile)) - 4) + 'XXXX'";
+            else str = "convert(varchar,m.tomobile)";
+
+            sql = @" select m.MessageId as MessageId, " + str + @" as MobileNo,
+                DATEADD(MINUTE," + Helper.Global.addMinutes + @",convert(varchar,m.inserttime,106) + ' ' + convert(varchar,m.inserttime,108)) as SentDate,
+                DATEADD(MINUTE," + Helper.Global.addMinutes + @",convert(varchar,d.inserttime,106) + ' ' + convert(varchar,d.inserttime,108)) as DeliveredDate,watext as Message,
+                CASE WHEN d.status_GroupName is null then 'UNKNOWN' ELSE CASE WHEN d.status_GroupName='Delivered' then 'DELIVERED' ELSE 'FAILED' END END 
+                AS MessageState, d.status_description as RESPONSE FROM wasubmitted m with (nolock)
+                left join [10.10.31.35].[SMPPMAIN_TX].[dbo].[DeliveryWABA] d with (nolock) on m.MessageId=d.msgid and convert(varchar,m.inserttime,102)=convert(varchar,d.inserttime,102) 
+                inner join WARCSfile u with (nolock) on u.fileid = m.fileid AND u.USERID=m.PROFILEID
+                where m.PROFILEID='" + userid + "'  and convert(date, m.inserttime)=convert(date, '" + date + "') order by m.inserttime ";
+
+
+            DataTable dt = database.GetDataTable(sql);
+            return dt;
+        }
+        public DataTable GetRCSDetail(string date, string userid)
+        {
+            string sql = "";
+            string str = "";
+            string str2 = "convert(varchar,m.tomobile)";
+            int SHOWMOBILEXXXX = Convert.ToInt16(database.GetScalarValue("Select isnull(showmobilexxxx,0) from customer where username='" + userid + "' "));
+            if (SHOWMOBILEXXXX == 1) str = "' ' + left(convert(varchar, m.tomobile), len(convert(varchar, m.tomobile)) - 4) + 'XXXX'";
+            else str = "convert(varchar,m.tomobile)";
+
+            sql = @" select m.MessageId as MessageId, " + str + @" as MobileNo,
+                DATEADD(MINUTE," + Helper.Global.addMinutes + @",convert(varchar,m.inserttime,106) + ' ' + convert(varchar,m.inserttime,108)) as SentDate,
+                DATEADD(MINUTE," + Helper.Global.addMinutes + @",convert(varchar,d.inserttime,106) + ' ' + convert(varchar,d.inserttime,108)) as DeliveredDate,msgtext as Message,
+                CASE WHEN d.status_GroupName is null then 'UNKNOWN' ELSE CASE WHEN d.status_GroupName='Delivered' then 'DELIVERED' ELSE 'FAILED' END END 
+                AS MessageState, d.status_description as RESPONSE FROM rcssubmitted m with (nolock)
+                left join [10.10.31.35].[SMPPMAIN_TX].[dbo].[DeliveryRCS] d with (nolock) on m.MessageId=d.msgid and convert(varchar,m.inserttime,102)=convert(varchar,d.inserttime,102) 
+                inner join WARCSfile u with (nolock) on u.fileid = m.fileid AND u.USERID=m.PROFILEID
+                where m.PROFILEID='" + userid + "'  and convert(date, m.inserttime)=convert(date, '" + date + "') order by m.inserttime ";
+
+
+            DataTable dt = database.GetDataTable(sql);
+            return dt;
+        }
+
+        public DataTable GetSettingDetails()
+        {
+            return database.GetDataTable("select * from settings");
+        }
+
+
+        public DataTable GetDayWiseReportAdminWise(string f, string t, string UserName)
+        {
+            string sql = @" declare @dltno varchar(550)
+set @dltno=(select dltno from customer where username='" + UserName + @"');
+
+select FORMAT(CAST(SMSDATE as date), 'dd-MM-yyyy') SMSDATE, SUM(SUBMITTED) Submitted,SUM(DELIVERED) DELIVERED,SUM(FAILED) FAILED,sum(UNKNOWN) UNKNOWN from DAYSUMMARY
+where userid in (select username from customer where dltno=@dltno  )
+and SMSDATE between '" + f + @"' and '" + t + "' group by CAST(SMSDATE as date) order by 1 desc ";
+
+            return database.GetDataTable(sql);
+
+        }
+
+        public void sendotpforchagepwd(string mobile, string user, string cc, string domain, string seg)
+        {
+
+            DataTable dt = database.GetDataTable("select * from settings");
+
+            string msg = dt.Rows[0]["PWDChangeSMS"].ToString();// Convert.ToString(database.GetScalarValue("select PWDChangeSMS from settings"));
+            msg = msg.Replace("#LINK", domain + seg);
+
+            // "Select TOP 1 * from customer where usertype='SYSADMIN'"
+
+
+
+            //string s = (cc == "91" ? dt.Rows[0]["senderid"].ToString() : senderid);
+
+            string s = Convert.ToString(database.GetScalarValue("select SENDERID from customer where username='" + user + "'"));
+
+
+            string smppacountid = (cc == "91" ? dt.Rows[0]["SMPPACCOUNTID"].ToString() : Convert.ToString(getDefaultSMPPAccountId(cc)) + "01");
+
+            string USER = user; // "20200125";
+            string templateid = (cc == "91" ? dt.Rows[0]["templateid"].ToString() : "");
+            string peid = (cc == "91" ? dt.Rows[0]["peid"].ToString() : ""); //getPEid(USER);
+            string sql = @"INSERT INTO [dbo].[MSGTRAN]
+           ([PROVIDER]
+           ,[SMPPACCOUNTID]
+           ,[PROFILEID]
+           ,[MSGTEXT]
+           ,[TOMOBILE]
+           ,[templateid]
+           ,[SENDERID]
+           ,[CREATEDAT]           
+           ,[PICKED_DATETIME],[PEID],[DATACODE])
+            VALUES
+           (
+           ''
+           , '" + smppacountid + @"'
+           , '" + USER + @"'
+           , '" + msg + @"'
+           , '" + mobile + @"'
+           , '" + templateid + @"'
+           , '" + s + @"'
+           , GETDATE()
+           , NULL,'" + peid + "','Default')";
+            Helper.dbmain.ExecuteNonQuery(sql);
+            double rat = getUserCountryRate(user, cc);
+            UpdateAndGetBalance(user, "", 1, rat);
+
+
+
+            string sql1 = "declare @sender varchar(100) declare @uid varchar(20) declare @peid varchar(50) select top 1 @uid=username, @sender=senderid, @peid=peid from customer where usertype='SYSADMIN' " +
+                "Insert into VerifyLink (userid,mobileno,segment,sendtime,validhitrecdtime,domain) " +
+                "values ('" + user + "','" + mobile + "','" + seg + "',getdate(),dateadd(MINUTE,5,getdate()),'" + domain + "' ) ; ";
+
+            //" Insert into MSGTRAN (PROVIDER, SMPPACCOUNTID, PROFILEID, MSGTEXT, TOMOBILE, SENDERID, CREATEDAT, peid,datacode) " +
+            //"values ('BSNL','301',@uid,'" + msg + "','" + mobile + "',@sender,getdate(),@peid,'Default')";
+            database.ExecuteNonQuery(sql1);
+        }
+        public DataTable GetRCSType(string usr)
+        {
+            DataTable dt = new DataTable("dt");
+            string sql = @"SELECT 'Text' AS RCSTYPE, '0' AS RCSVAL
+                            UNION ALL
+                            SELECT 'Text & Image' AS RCSTYPE, '1' AS RCSVAL 
+                            UNION ALL
+                            SELECT 'Text & Vedio' AS RCSTYPE, '2' AS RCSVAL 
+                                UNION ALL
+                            SELECT 'All (Text,Image,Vodeo)' AS RCSTYPE, '3' AS RCSVAL 
+                            ";
+
+            dt = database.GetDataTable(sql);
+            return dt;
+        }
+
+        public void Updattempdata(string userid, long ID, long TempId)
+        {
+
+            // add two parameter clkdate and Country on 03-02-22
+            string user1 = "Tmp_DeleteCrousel_" + userid;
+            string sql = "";
+            string sql1 = "";
+
+            sql = @"select * from " + user1 + "";
+
+            sql1 = @"IF EXISTS( SELECT * FROM sys.objects WHERE object_id = OBJECT_ID(N'dbo." + user1 + "')) BEGIN select count(*) from " + user1 + " END;";
+
+            int count = Convert.ToInt32(database.GetScalarValue("Select Count(*) from RcsTemplateDetail where userid='" + userid + "' and templateid='" + TempId + "'and active=1"));
+            int count1 = Convert.ToInt32(database.GetScalarValue(sql1));
+
+
+            sql = @"if exists (select * from sys.tables where name='" + user1 + @"')  " +
+                    " begin " +
+                   " Insert into " + user1 + @"(USERID,ID ,templateid) Values('" + userid + "', '" + ID + "', '" + TempId + "')" +
+                   " end else begin Create table " + user1 + @" (USERID VARCHAR(50),ID bigint,TemplateID bigint)" +
+                   "Insert into " + user1 + @"(USERID,ID ,templateid) Values('" + userid + "', '" + ID + "', '" + TempId + "') end" +
+                   " Select * from " + user1 + " ";
+
+            database.ExecuteNonQuery(sql);
+
+        }
+
+        public DataTable RcsReportViewDetails(string fileid)
+        {
+            string sql = "";
+
+            sql = @"select convert(varchar(30),r.CreatedDate,103) CreatedDate ,c.username, s.messageId,s.MobNo, 
+  s.CreatedDate SendDate, convert(varchar(10),d.doneAt,103) DeliveryDate, dbo.RCSType(r.MsgType) as RCSType,
+  s.sentstatus,isnull(d.status_groupName,'') DeliveryResponse,
+case when MsgType=1 then isnull(r.MsgText,'') else isnull(t.TemplateName,'') end as MsgText, seen.seenAt as seentime,
+(case when isnull(seen.MSGID, '') <> '' then 'Seen' else 'Unseen' end) as seenstatus
+  from CUSTOMER c 
+  inner join tblRCSMSGRCVD r on c.username=r.UserId
+  inner join tblRCSMSGSUBMITTED s on r.Id=s.RcsMsgRcvdId
+  left outer join dbo.tblRCSMSGDELIVERY d on s.messageId=d.MSGID
+left join dbo.RCSSeenRpt seen with (nolock) on seen.MSGID=s.messageId
+  left outer join dbo.RcsTemplateHeader t on r.TemplateID=t.TemplateID where r.id='" + fileid + "'";
+
+            sql = sql + " order by r.CreatedDate ";
+            DataTable dt = database.GetDataTable(sql);
+            return dt;
+        }
+
+        public DataTable RCSGetCampaignToday(string user)
+        {
+            DataTable dt = new DataTable("dt");
+            //string sql = @"select distinct campaign from tblRCSMSGRCVD where userid='" + user + "' and isnull(campaign,'') <> '' and convert(varchar,CreatedDate,102)=convert(varchar,getdate(),102) ";
+            string sql = @"select distinct campaign from tblRCSMSGRCVD where userid='" + user + "' and isnull(campaign,'') <> ''";
+            dt = database.GetDataTable(sql);
+            return dt;
+        }
+
+        public DataTable SP_GetRCSDeliveryReports(string user, string fdate, string tdate, string camp)
+        {
+            DataTable dt = new DataTable();
+            using (SqlConnection cnn = new SqlConnection(database.GetConnectstring()))
+            {
+                cnn.Open();
+                SqlCommand cmd = new SqlCommand();
+                cmd.Connection = cnn;
+                cmd.CommandTimeout = 3600;
+                SqlDataAdapter da = new SqlDataAdapter();
+                da.SelectCommand = cmd;
+                cmd.CommandType = CommandType.StoredProcedure;
+                cmd.CommandText = "SP_GetRCSDLRReports";
+
+                cmd.Parameters.AddWithValue("usr", user);
+                cmd.Parameters.AddWithValue("@FDate", fdate);
+                cmd.Parameters.AddWithValue("@TDate", tdate);
+                cmd.Parameters.AddWithValue("camp", camp);
+                da.Fill(dt);
+                cmd.ExecuteNonQuery();
+
+            }
+            return dt;
+        }
+
+        public DataTable RcsGetDeliveryDetails(string user, string dat)
+        {
+            string sql = "";
+
+            sql = @"select convert(varchar(30),r.CreatedDate,103) CreatedDate ,c.username, s.messageId,s.MobNo, 
+  s.CreatedDate SendDate, convert(varchar(10),d.doneAt,103) DeliveryDate, dbo.RCSType(r.MsgType) as RCSType,
+  s.sentstatus,isnull(d.status_groupName,'') DeliveryResponse,
+case when MsgType=1 then isnull(r.MsgText,'') else isnull(t.TemplateName,'') end as MsgText,seen.seenAt as seentime,
+(case when isnull(seen.MSGID, '') <> '' then 'Seen' else 'Unseen' end) as seenstatus
+  from CUSTOMER c 
+  inner join tblRCSMSGRCVD r on c.username=r.UserId
+  inner join tblRCSMSGSUBMITTED s on r.Id=s.RcsMsgRcvdId
+  left outer join dbo.tblRCSMSGDELIVERY d on s.messageId=d.MSGID
+  left join dbo.RCSSeenRpt seen with (nolock) on seen.MSGID=s.messageId
+  left outer join dbo.RcsTemplateHeader t on r.TemplateID=t.TemplateID where username='" + user + "' and convert(varchar,r.CreatedDate,103)='" + dat + "'";
+
+            sql = sql + " order by r.CreatedDate ";
+            DataTable dt = database.GetDataTable(sql);
+            return dt;
+        }
+
+        public DataTable Getrcsreports(string user, string f, string t, string usertype, string dltNo)
+        {
+            string sql = "";
+            string dlt = "";
+
+            sql = @"select convert(varchar(30),r.CreatedDate,103) CreatedDate , c.username, 
+   count(*) as SUBMITTED,
+ --sum(case when isnull(sentstatus, '') = 'OK' then 1 else 0 end) as SUBMITTED,
+ sum(case when isnull(sentstatus, '') = 'OK' then 0 else 1 end) as REJECTED,
+ sum(
+ case when isnull(s.sentstatus, '') = 'OK' 
+		then
+		case when isnull(d.status_groupName, '') = 'DELIVERED' then 1 else 0 end
+		else 0 
+ end
+ ) as DELIVERED,
+ sum(
+ case when isnull(s.sentstatus, '') = 'OK' 
+		then
+		case when isnull(d.status_groupName, '') != 'DELIVERED' then 1 else 0 end
+		else 0 
+ end
+ ) as FAILED,
+ sum(case when isnull(sentstatus, '') = 'OK' and d.status_groupName IS NULL then 1 else 0 end) as unknown ,  
+ sum(case when seen.seenAt IS NOT NULL then 1 else 0 end) as Seen
+ from CUSTOMER c 
+  inner join tblRCSMSGRCVD r on c.username=r.UserId
+  inner join tblRCSMSGSUBMITTED s on r.Id=s.RcsMsgRcvdId
+  left join dbo.RCSSeenRpt seen with (nolock) on seen.MSGID=s.messageId
+  left outer join dbo.tblRCSMSGDELIVERY d on s.messageId=d.MSGID
+  where r.CreatedDate between '" + f + "' and '" + t + @"'";
+
+            //if (campname != "")
+            //{
+            //    sql = sql + " and r.campaign = '" + campname + "' ";
+            //}
+            if (usertype.ToUpper() == "ADMIN")
+            {
+                if (dltNo != "")
+                {
+                    sql = sql + " and r.UserId IN (select username from CUSTOMER where DLTNO='" + dltNo + "' )";
+                }
+            }
+            sql = sql + " group by c.username,convert(varchar(30),r.CreatedDate,103) order by CreatedDate desc";
+            DataTable dt = database.GetDataTable(sql);
+            return dt;
+        }
+
+        public DataTable GetUserRCSReportDetail(string user, string dat)
+        {
+            string sql = "";
+            sql = @"select convert(varchar(30),r.CreatedDate,103) CreatedDate ,c.username, s.messageId,s.MobNo, 
+  s.CreatedDate SendDate, convert(varchar(10),d.doneAt,103) DeliveryDate, dbo.RCSType(r.MsgType) as RCSType,
+  s.sentstatus,isnull(d.status_groupName,'') DeliveryResponse,
+case when MsgType=1 then isnull(r.MsgText,'') else isnull(t.TemplateName,'') end as MsgText,seen.seenAt as seentime,
+(case when isnull(seen.MSGID, '') <> '' then 'Seen' else 'Unseen' end) as seenstatus
+  from CUSTOMER c 
+  inner join tblRCSMSGRCVD r on c.username=r.UserId
+  inner join tblRCSMSGSUBMITTED s on r.Id=s.RcsMsgRcvdId
+  left outer join dbo.tblRCSMSGDELIVERY d on s.messageId=d.MSGID
+  left join dbo.RCSSeenRpt seen with (nolock) on seen.MSGID=s.messageId
+  left outer join dbo.RcsTemplateHeader t on r.TemplateID=t.TemplateID where username='" + user + "' and convert(varchar,r.CreatedDate,103)='" + dat + "'";
+
+            sql = sql + " order by r.CreatedDate ";
+            DataTable dt = database.GetDataTable(sql);
+            return dt;
+        }
+
+        public DataTable getdltno(string prefixText)
+        {
+            string sql = "SELECT DISTINCT dltno FROM customer WHERE dltno like '%" + prefixText + "%'";
+            DataTable dt = database.GetDataTable(sql);
+            return dt;
+
+        }
+        public DataTable GetRCSUserParameterToEdit(string usr)
+        {
+            string sql = "select * from CUSTOMER c with(nolock) join MapSMSAcc t on c.username=t.RCSAccId where SMSAccId='" + usr + "' ";
+            DataTable dt = database.GetDataTable(sql);
+            return dt;
+        }
+        public DataTable GetRCSUserToEdit(string usr, string rcsaccid, string rcsapikey, string rcsapiurl)
+        {
+            string sql = "update CUSTOMER set RCSACCID='" + rcsaccid + "',RCSAUTHKEY='" + rcsapikey + "',RCSURL='" + rcsapiurl + "' from CUSTOMER c with(nolock) join MapSMSAcc t on c.username=t.RCSAccId where t.SMSAccId='" + usr + "'";
+            DataTable dt = database.GetDataTable(sql);
+            return dt;
+        }
+    }
+}
