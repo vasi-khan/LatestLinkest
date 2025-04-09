@@ -9512,7 +9512,7 @@ where f.userid = '" + user + @"' and s.sentdatetime between '" + f + @"' and '" 
         {
             string sql = "";
             sql = @"select row_number() over (Order by s.createdat DESC) as Sln, C.compname,C.fullname,C.mobile1 as mobile,C.email,s.senderid as sender,C.username as userid,s.filepath,s.countrycode " +
-            " from customer C inner join senderidrequeset s on c.username=s.username where (isnull(s.rejected,0)=0 and isnull(s.allotedsenderid,'')='') AND s.username='" + username + "' ORDER BY s.createdat DESC ";
+            " from customer C inner join   s on c.username=s.username where (isnull(s.rejected,0)=0 and isnull(s.allotedsenderid,'')='') AND s.username='" + username + "' ORDER BY s.createdat DESC ";
 
             DataTable dt = database.GetDataTable(sql);
             return dt;
