@@ -7354,6 +7354,7 @@ SELECT 'Link Text' AS SMSTYPE, '2' AS SMSVAL
                             " REPLACE(N'" + msg + "','" + shortURL + "','" + domain + "' + shortsegment),'" + rate + "' from #t12 ; " +
                             " Insert into delivery (DLVRTEXT,MSGID,DLVRTIME,DLVRSTATUS,err_code,INSERTDATE) " +
                             @" select 'id:' + MSGID + ' sub:001 dlvrd:001 submit date:' + RIGHT(cONVERT(VARCHAR,getdate(),112),6) + REPLACE(cONVERT(VARCHAR,getdate(),108),':','') + 
+
                         ' done date:' + RIGHT(cONVERT(VARCHAR, GETDATE(), 112), 6) + REPLACE(cONVERT(VARCHAR, GETDATE(), 108), ':', '') + ' stat:DELIVRD err:000 text:' AS DLVRTEXT, MSGID, GETDATE(), 'Delivered','000',getdate()
                         FROM #t12 ; ";
                         }
